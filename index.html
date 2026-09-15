@@ -19,24 +19,33 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
-  <audio id="bgm" src="/music/bgm.mp3" loop preload="auto" muted></audio>
-  <button id="play-btn" style="position: fixed; bottom: 20px; right: 20px; z-index: 999; padding: 10px 15px; border-radius: 5px; cursor: pointer; background: #fff; border: 1px solid #ccc;">
-  ▶ 播放背景音乐
-  </button>
+  <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
+
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     const bgm = document.getElementById('bgm');
-    const playBtn = document.getElementById('play-btn');
-    playBtn.addEventListener('click', function() {
-      bgm.muted = false;
-      bgm.volume = 0.3; // 设置音量（0.0 到 1.0）
-      bgm.play().then(() => {
-        playBtn.style.display = 'none';
-      }).catch(error => {
-        console.error("播放失败:", error);
-      });
+    const targetVolume = 0.3;
+    bgm.volume = targetVolume;
+    bgm.play().catch(error => {
+      console.log("静音自动播放被浏览器拦截:", error);
     });
+    const unlockAudio = () => {
+      if (bgm.paused) {
+        bgm.play().catch(e => console.log("播放失败:", e));
+      }
+      bgm.muted = false;
+      bgm.volume = targetVolume;
+      document.removeEventListener('click', unlockAudio);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('scroll', unlockAudio);
+      document.removeEventListener('keydown', unlockAudio);
+    };
+    document.addEventListener('click', unlockAudio);
+    document.addEventListener('touchstart', unlockAudio);
+    document.addEventListener('scroll', unlockAudio);
+    document.addEventListener('keydown', unlockAudio);
   });
 </script>
+  
 </body>
 </html>
