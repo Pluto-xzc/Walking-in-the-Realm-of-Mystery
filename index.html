@@ -5,14 +5,14 @@
   <title>行于迷域</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   
-  <!-- 1. Docsify 官方主题 (使用 jsDelivr CDN) -->
+  <!-- 1. Docsify 官方主题 (jsDelivr CDN) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/themes/vue.css" />
   
-  <!-- 2. 侧边栏折叠插件样式 (使用 unpkg CDN) -->
-  <link rel="stylesheet" href="https://unpkg.com/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
+  <!-- 2. 侧边栏折叠插件样式 (jsDelivr CDN，包名正确) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
 
   <style>
-    /* 侧边栏基础样式 (始终显示) */
+    /* 侧边栏始终显示 */
     .sidebar {
       display: block !important;
       position: fixed;
@@ -49,29 +49,29 @@
   <!-- 背景音乐标签 -->
   <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
 
-  <!-- ========== Docsify 配置与插件 ========== -->
+  <!-- ========== Docsify 配置 ========== -->
   <script>
     window.$docsify = {
       name: '行于迷域',
       loadSidebar: true,
       subMaxLevel: 3,
       auto2top: true,
-      // 可配置侧边栏默认展示的层级
-      sidebarDisplayLevel: 1 
+      // 控制初始展示层级（插件配置项）
+      sidebarDisplayLevel: 1
     };
   </script>
 
-  <!-- 3. Docsify 核心脚本 (使用 jsDelivr CDN) -->
+  <!-- 3. Docsify 核心脚本 (jsDelivr CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/docsify@4"></script>
 
-  <!-- 4. 侧边栏折叠插件脚本 (使用 unpkg CDN) -->
-  <script src="https://unpkg.com/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
+  <!-- 4. 侧边栏折叠插件脚本 (jsDelivr CDN，包名正确) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
 
   <!-- ========== 背景音乐控制逻辑 ========== -->
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
-      const targetVolume = 0.3; // 音量，范围 0.0 到 1.0
+      const targetVolume = 0.3;
 
       bgm.volume = targetVolume;
 
@@ -89,7 +89,6 @@
         if (bgm.paused) {
           bgm.play().catch(e => console.error('播放失败:', e));
         }
-        // 移除监听器，避免重复触发
         document.removeEventListener('click', unlockAudio);
         document.removeEventListener('touchstart', unlockAudio);
         document.removeEventListener('scroll', unlockAudio);
