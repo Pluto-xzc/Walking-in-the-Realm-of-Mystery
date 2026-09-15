@@ -19,22 +19,33 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
-  <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
 
+<audio id="bgm" src="music/bgm.mp3" loop autoplay muted></audio>
+<div id="music-tip" style="display: none; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 12px 24px; border-radius: 30px; font-size: 14px; cursor: pointer; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+  🎵
+</div>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     const bgm = document.getElementById('bgm');
+    const tip = document.getElementById('music-tip');
     const targetVolume = 0.3;
     bgm.volume = targetVolume;
-    bgm.play().catch(error => {
-      console.log("静音自动播放被浏览器拦截:", error);
-    });
+    const playPromise = bgm.play();
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        console.log("等待用户交互解锁声音...");
+      }).catch(error => {
+        console.log("等待用户点击...");
+        tip.style.display = 'block';
+      });
+    }
     const unlockAudio = () => {
-      if (bgm.paused) {
-        bgm.play().catch(e => console.log("播放失败:", e));
-      }
       bgm.muted = false;
       bgm.volume = targetVolume;
+      if (bgm.paused) {
+        bgm.play().catch(e => console.error("播放失败:", e));
+      }
+      tip.style.display = 'none';
       document.removeEventListener('click', unlockAudio);
       document.removeEventListener('touchstart', unlockAudio);
       document.removeEventListener('scroll', unlockAudio);
@@ -44,6 +55,7 @@
     document.addEventListener('touchstart', unlockAudio);
     document.addEventListener('scroll', unlockAudio);
     document.addEventListener('keydown', unlockAudio);
+    tip.addEventListener('click', unlockAudio);
   });
 </script>
   
