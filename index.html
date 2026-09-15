@@ -4,9 +4,12 @@
   <meta charset="UTF-8">
   <title>行于迷域</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  
+  <!-- Docsify 主题 -->
   <link rel="stylesheet" href="https://npm.elemecdn.com/docsify@4/lib/themes/vue.css">
   
   <style>
+    /* ========== 1. 侧边栏始终显示 ========== */
     .sidebar {
       display: block !important;
       position: fixed;
@@ -20,36 +23,39 @@
       border-right: 1px solid #eee;
       box-sizing: border-box;
     }
-    .content {
-      left: 300px;
-    }
+    .content { left: 300px; }
     @media screen and (max-width: 768px) {
       .sidebar { transform: translateX(-300px); }
       .content { left: 0; }
       body.close .sidebar { transform: translateX(0); }
     }
-    .sidebar-nav li > ul {
-      display: none;
-    }
-    .sidebar-nav li.open > ul {
-      display: block !important;
-    }
-    .sidebar-nav li.has-children > p::after {
+
+    /* ========== 2. 折叠核心样式（匹配 Docsify 的 p 结构） ========== */
+    /* 默认隐藏所有子菜单 */
+    .sidebar-nav li > ul { display: none !important; }
+    /* 展开状态显示子菜单 */
+    .sidebar-nav li.open > ul { display: block !important; }
+    
+    /* 折叠箭头（精准定位到 li > p 内的 a） */
+    .sidebar-nav li.has-children > p { position: relative; }
+    .sidebar-nav li.has-children > p > a::after {
       content: '▶';
-      float: right;
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%) rotate(0deg);
       font-size: 10px;
       color: #999;
       transition: transform 0.2s;
-      margin-right: 5px;
-      position: relative;
-      top: 3px;
     }
-    .sidebar-nav li.has-children.open > p::after {
-      transform: rotate(90deg);
+    /* 展开时箭头旋转 */
+    .sidebar-nav li.has-children.open > p > a::after {
+      transform: translateY(-50%) rotate(90deg);
     }
-    .sidebar-nav li.has-strong > p::after {
-      display: none;
-    }
+    /* 一级加粗目录隐藏箭头（不可折叠） */
+    .sidebar-nav li.has-strong > p > a::after { display: none; }
+
+    /* ========== 3. 高亮当前页面 ========== */
     .sidebar-nav li.active > p > a,
     .sidebar-nav li > p > a.active {
       color: #42b983 !important;
@@ -58,32 +64,29 @@
       border-radius: 4px;
       padding: 2px 6px;
     }
+
+    /* ========== 4. 音乐提示 ========== */
     #music-tip {
-      display: none;
-      position: fixed;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.8);
-      color: white;
-      padding: 12px 24px;
-      border-radius: 30px;
-      font-size: 14px;
-      cursor: pointer;
-      z-index: 9999;
+      display: none; position: fixed; top: 20px; left: 50%;
+      transform: translateX(-50%); background: rgba(0, 0, 0, 0.8);
+      color: white; padding: 12px 24px; border-radius: 30px;
+      font-size: 14px; cursor: pointer; z-index: 9999;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
     #music-tip:hover { background: rgba(0, 0, 0, 0.95); }
   </style>
 </head>
 <body>
+
   <div id="app">加载中...</div>
+
   <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
-  <div id="music-tip">music</div>
-  
+  <div id="music-tip">🎵 点击任意位置，开启背景音乐</div>
+
+  <!-- ========== Docsify 配置与插件 ========== -->
   <script>
     window.$docsify = {
-      name: 'Walking in the Realm of Mystery',
+      name: '行于迷域',
       loadSidebar: true,
       subMaxLevel: 3,
       auto2top: true,
@@ -92,47 +95,61 @@
           hook.doneEach(function() {
             const sidebar = document.querySelector('.sidebar-nav');
             if (!sidebar) return;
-            sidebar.querySelectorAll('li').forEach(li => {
-              li.classList.remove('open', 'has-children', 'has-strong');
-            });
+
+            // 1. 遍历所有 li，给有子菜单的添加标记
             sidebar.querySelectorAll('li').forEach(li => {
               const sublist = li.querySelector('ul');
               if (sublist) {
                 li.classList.add('has-children');
-                const isBold = li.querySelector('strong') !== null;
-                if (isBold) {
+                // 如果包含 strong，标记为一级目录（不折叠）
+                if (li.querySelector('strong')) {
                   li.classList.add('has-strong');
-                  li.classList.add('open');
                 }
               }
             });
+
+            // 2. 核心：自动展开当前页面的所有父级菜单
             const activeLink = sidebar.querySelector('a.active');
             if (activeLink) {
               let parent = activeLink.parentElement;
               while (parent && parent !== sidebar) {
                 if (parent.tagName === 'LI' && parent.querySelector('ul')) {
-                  parent.classList.add('open');
+                  parent.classList.add('open'); // 给包含当前页的 li 加 open
                 }
                 parent = parent.parentElement;
               }
             }
-            sidebar.querySelectorAll('li.has-children > p').forEach(p => {
-              if (p.dataset.hasListener) return;
-              p.dataset.hasListener = 'true';
-              
-              p.addEventListener('click', function(e) {
-                const li = p.parentElement;
-                li.classList.toggle('open');
-              });
-            });
           });
         }
       ]
     };
   </script>
 
+  <!-- Docsify 核心脚本 -->
   <script src="https://npm.elemecdn.com/docsify@4/lib/docsify.min.js"></script>
 
+  <!-- ========== 全局事件委托：完美实现折叠 ========== -->
+  <script>
+    // 使用事件委托绑定在 document 上，避免 Docsify 路由重渲染导致失效
+    document.addEventListener('click', function(e) {
+      // 精准找到被点击的包含子菜单的 p 标签
+      const p = e.target.closest('.sidebar-nav li.has-children > p');
+      if (!p) return;
+
+      const li = p.parentElement;
+      
+      // 如果点击的是链接文本（<a>），允许它正常跳转，不阻止默认行为
+      // 跳转后，doneEach 钩子会根据 a.active 自动保持展开状态
+      if (e.target.tagName === 'A') {
+        return; 
+      }
+
+      // 如果点击的是空白处或箭头，切换折叠状态
+      li.classList.toggle('open');
+    });
+  </script>
+
+  <!-- ========== 背景音乐控制 ========== -->
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
@@ -142,18 +159,15 @@
       bgm.volume = targetVolume;
 
       bgm.play().then(() => {
-        console.log('等待交互');
+        console.log('静音自动播放成功，等待用户交互解锁声音...');
       }).catch(err => {
-        console.log('被拦截：', err);
         tip.style.display = 'block';
       });
 
       const unlockAudio = () => {
         bgm.muted = false;
         bgm.volume = targetVolume;
-        if (bgm.paused) {
-          bgm.play().catch(e => console.error('播放失败:', e));
-        }
+        if (bgm.paused) bgm.play().catch(e => console.error(e));
         tip.style.display = 'none';
         document.removeEventListener('click', unlockAudio);
         document.removeEventListener('touchstart', unlockAudio);
