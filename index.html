@@ -20,6 +20,63 @@
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
 
+<style>
+  .sidebar-nav li > ul {
+    display: none;
+    padding-left: 15px !important; 
+  }
+  .sidebar-nav li.has-strong > ul {
+    display: block;
+  }
+  .sidebar-nav li.collapsed > ul {
+    display: none !important;
+  }
+  .sidebar-nav li.has-children > a::after {
+    content: '▶';
+    display: inline-block;
+    font-size: 0.8em;
+    transition: transform 0.2s;
+    margin-left: 5px;
+  }
+  .sidebar-nav li.has-children:not(.collapsed) > a::after {
+    transform: rotate(90deg);
+  }
+  .sidebar-nav li.has-strong > a::after {
+    display: none;
+  }
+</style>
+
+<script>
+  window.$docsify = window.$docsify || {};
+  window.$docsify.plugins = (window.$docsify.plugins || []).concat([
+    function(hook, vm) {
+      hook.doneEach(function() {
+        const sidebar = document.querySelector('.sidebar-nav');
+        if (!sidebar) return;
+        const listItems = sidebar.querySelectorAll('li');
+        listItems.forEach(li => {
+          const sublist = li.querySelector('ul');
+          if (!sublist) return; 
+          const isBold = li.querySelector('strong') !== null;
+          li.classList.add('has-children');
+          if (isBold) {
+            li.classList.add('has-strong');
+          }
+          if (!isBold) {
+            li.classList.add('collapsed');
+            li.addEventListener('click', function(e) {
+              const isLink = e.target.tagName === 'A';
+              if (isLink) {
+                li.classList.toggle('collapsed');
+              }
+            });
+          }
+        });
+      });
+    }
+  ]);
+</script>
+  
 <audio id="bgm" src="music/bgm.mp3" loop autoplay muted></audio>
 <div id="music-tip" style="display: none; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 12px 24px; border-radius: 30px; font-size: 14px; cursor: pointer; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
   🎵
