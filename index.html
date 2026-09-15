@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <title>行于迷域</title>
-  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
-  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify/lib/themes/vue.css">
+  <link rel="stylesheet" href="https://npm.elemecdn.com/docsify@4/lib/themes/vue.css">
+  
   <style>
     .sidebar {
       display: block !important;
@@ -17,6 +17,8 @@
       overflow-y: auto;
       z-index: 10;
       background-color: #fff;
+      border-right: 1px solid #eee;
+      box-sizing: border-box;
     }
     .content {
       left: 300px;
@@ -27,23 +29,25 @@
       body.close .sidebar { transform: translateX(0); }
     }
     .sidebar-nav li > ul {
-      display: none !important;
-      padding-left: 15px !important;
+      display: none;
     }
-    .sidebar-nav li:not(.collapsed) > ul {
+    .sidebar-nav li.open > ul {
       display: block !important;
     }
-    .sidebar-nav li > p > a::after {
-      content: ' ▶';
-      font-size: 0.75em;
-      transition: transform 0.2s;
-      display: inline-block;
+    .sidebar-nav li.has-children > p::after {
+      content: '▶';
+      float: right;
+      font-size: 10px;
       color: #999;
+      transition: transform 0.2s;
+      margin-right: 5px;
+      position: relative;
+      top: 3px;
     }
-    .sidebar-nav li:not(.collapsed) > p > a::after {
+    .sidebar-nav li.has-children.open > p::after {
       transform: rotate(90deg);
     }
-    .sidebar-nav li > p > strong::after {
+    .sidebar-nav li.has-strong > p::after {
       display: none;
     }
     .sidebar-nav li.active > p > a,
@@ -68,72 +72,87 @@
       cursor: pointer;
       z-index: 9999;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      transition: opacity 0.3s;
     }
-    #music-tip:hover {
-      background: rgba(0, 0, 0, 0.9);
-    }
+    #music-tip:hover { background: rgba(0, 0, 0, 0.95); }
   </style>
 </head>
 <body>
   <div id="app">加载中...</div>
   <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
   <div id="music-tip">music</div>
+  
   <script>
     window.$docsify = {
       name: 'Walking in the Realm of Mystery',
-      repo: 'Pluto-xzc/Walking-in-the-Realm-of-Mystery',
       loadSidebar: true,
       subMaxLevel: 3,
       auto2top: true,
-    };
-
-    window.$docsify.plugins = (window.$docsify.plugins || []).concat([
-      function(hook, vm) {
-        hook.doneEach(function() {
-          const sidebar = document.querySelector('.sidebar-nav');
-          if (!sidebar) return;
-          const listItems = sidebar.querySelectorAll('li');
-          listItems.forEach(li => {
-            const sublist = li.querySelector('ul');
-            if (!sublist) return; 
-            const isBold = li.querySelector('strong') !== null;
-            if (!isBold) {
-              li.classList.add('collapsed');
-              li.addEventListener('click', function(e) {
-                li.classList.toggle('collapsed');
-              });
-            } else {
-              li.classList.remove('collapsed');
+      plugins: [
+        function(hook, vm) {
+          hook.doneEach(function() {
+            const sidebar = document.querySelector('.sidebar-nav');
+            if (!sidebar) return;
+            sidebar.querySelectorAll('li').forEach(li => {
+              li.classList.remove('open', 'has-children', 'has-strong');
+            });
+            sidebar.querySelectorAll('li').forEach(li => {
+              const sublist = li.querySelector('ul');
+              if (sublist) {
+                li.classList.add('has-children');
+                const isBold = li.querySelector('strong') !== null;
+                if (isBold) {
+                  li.classList.add('has-strong');
+                  li.classList.add('open');
+                }
+              }
+            });
+            const activeLink = sidebar.querySelector('a.active');
+            if (activeLink) {
+              let parent = activeLink.parentElement;
+              while (parent && parent !== sidebar) {
+                if (parent.tagName === 'LI' && parent.querySelector('ul')) {
+                  parent.classList.add('open');
+                }
+                parent = parent.parentElement;
+              }
             }
+            sidebar.querySelectorAll('li.has-children > p').forEach(p => {
+              if (p.dataset.hasListener) return;
+              p.dataset.hasListener = 'true';
+              
+              p.addEventListener('click', function(e) {
+                const li = p.parentElement;
+                li.classList.toggle('open');
+              });
+            });
           });
-        });
-      }
-    ]);
+        }
+      ]
+    };
   </script>
 
-  <script src="//cdn.jsdelivr.net/npm/docsify/lib/docsify.min.js"></script>
-  
+  <script src="https://npm.elemecdn.com/docsify@4/lib/docsify.min.js"></script>
+
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
       const tip = document.getElementById('music-tip');
-      const targetVolume = 0.1; 
+      const targetVolume = 0.3;
+
       bgm.volume = targetVolume;
-      const playPromise = bgm.play();
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
-          console.log("等待交互...");
-        }).catch(error => {
-          console.log("等待点击...");
-          tip.style.display = 'block';
-        });
-      }
+
+      bgm.play().then(() => {
+        console.log('等待交互');
+      }).catch(err => {
+        console.log('被拦截：', err);
+        tip.style.display = 'block';
+      });
+
       const unlockAudio = () => {
         bgm.muted = false;
         bgm.volume = targetVolume;
         if (bgm.paused) {
-          bgm.play().catch(e => console.error("播放失败:", e));
+          bgm.play().catch(e => console.error('播放失败:', e));
         }
         tip.style.display = 'none';
         document.removeEventListener('click', unlockAudio);
@@ -141,6 +160,7 @@
         document.removeEventListener('scroll', unlockAudio);
         document.removeEventListener('keydown', unlockAudio);
       };
+
       document.addEventListener('click', unlockAudio);
       document.addEventListener('touchstart', unlockAudio);
       document.addEventListener('scroll', unlockAudio);
