@@ -7,9 +7,17 @@
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/themes/vue.css" />
 
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
 
   <style>
+    @media screen and (min-width: 769px) {
+      .sidebar {
+        position: sticky !important;
+        top: 0;
+        height: 100vh;
+        overflow-y: auto;
+      }
+    }
     .sidebar-nav li.active > a,
     .sidebar-nav li > a.active {
       color: #42b983 !important;
@@ -18,7 +26,6 @@
       border-radius: 4px;
       padding: 2px 6px;
     }
-
     #music-tip {
       display: none;
       position: fixed;
@@ -34,7 +41,9 @@
       z-index: 9999;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
-    #music-tip:hover { background: rgba(0, 0, 0, 0.95); }
+    #music-tip:hover {
+      background: rgba(0, 0, 0, 0.95);
+    }
   </style>
 </head>
 <body>
@@ -42,31 +51,27 @@
   <div id="app">加载中...</div>
 
   <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
+
   <div id="music-tip">《铁花飞》</div>
 
-  <!-- Docsify 配置 -->
   <script>
     window.$docsify = {
       name: '行于迷域',
       loadSidebar: true,
       subMaxLevel: 3,
-      auto2top: true,
-      sidebar: {
-        displayLevel: 1,
-        persist: true
-      }
+      auto2top: true
     };
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/docsify@4"></script>
 
-  <script src="https://cdn.jsdelivr.net/npm/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
 
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
       const tip = document.getElementById('music-tip');
-      const targetVolume = 0.3;
+      const targetVolume = 0.1;
 
       bgm.volume = targetVolume;
 
@@ -76,7 +81,6 @@
         console.log('等待点击');
         tip.style.display = 'block';
       });
-
       const unlockAudio = () => {
         bgm.muted = false;
         bgm.volume = targetVolume;
