@@ -4,91 +4,86 @@
   <meta charset="UTF-8">
   <title>行于迷域</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
-  
-  <!-- 1. Docsify 官方主题 (jsDelivr CDN) -->
+
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/themes/vue.css" />
-  
-  <!-- 2. 侧边栏折叠插件样式 (jsDelivr CDN，包名正确) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
 
   <style>
-    /* 侧边栏始终显示 */
-    .sidebar {
-      display: block !important;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 300px;
-      height: 100%;
-      overflow-y: auto;
-      z-index: 10;
-      background-color: #fff;
-      border-right: 1px solid #eee;
-      box-sizing: border-box;
-    }
-    .content { left: 300px; }
-    @media screen and (max-width: 768px) {
-      .sidebar { transform: translateX(-300px); }
-      .content { left: 0; }
-      body.close .sidebar { transform: translateX(0); }
-    }
-    
-    /* 高亮当前页面条目 */
-    .sidebar-nav li.active > a {
+    .sidebar-nav li.active > a,
+    .sidebar-nav li > a.active {
       color: #42b983 !important;
       font-weight: bold;
       background: rgba(66, 185, 131, 0.1);
       border-radius: 4px;
+      padding: 2px 6px;
     }
+
+    #music-tip {
+      display: none;
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 30px;
+      font-size: 14px;
+      cursor: pointer;
+      z-index: 9999;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    #music-tip:hover { background: rgba(0, 0, 0, 0.95); }
   </style>
 </head>
 <body>
 
   <div id="app">加载中...</div>
 
-  <!-- 背景音乐标签 -->
   <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
+  <div id="music-tip">《铁花飞》</div>
 
-  <!-- ========== Docsify 配置 ========== -->
+  <!-- Docsify 配置 -->
   <script>
     window.$docsify = {
       name: '行于迷域',
       loadSidebar: true,
       subMaxLevel: 3,
       auto2top: true,
-      // 控制初始展示层级（插件配置项）
-      sidebarDisplayLevel: 1
+      sidebar: {
+        displayLevel: 1,
+        persist: true
+      }
     };
   </script>
 
-  <!-- 3. Docsify 核心脚本 (jsDelivr CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/docsify@4"></script>
 
-  <!-- 4. 侧边栏折叠插件脚本 (jsDelivr CDN，包名正确) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
 
-  <!-- ========== 背景音乐控制逻辑 ========== -->
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
+      const tip = document.getElementById('music-tip');
       const targetVolume = 0.3;
 
       bgm.volume = targetVolume;
 
-      // 尝试静音自动播放
       bgm.play().then(() => {
-        console.log('静音自动播放成功，等待用户交互解锁声音...');
+        console.log('等待交互');
       }).catch(err => {
-        console.log('静音自动播放被拦截，等待用户点击...');
+        console.log('等待点击');
+        tip.style.display = 'block';
       });
 
-      // 用户第一次交互时解锁声音
       const unlockAudio = () => {
         bgm.muted = false;
         bgm.volume = targetVolume;
         if (bgm.paused) {
           bgm.play().catch(e => console.error('播放失败:', e));
         }
+        tip.style.display = 'none';
         document.removeEventListener('click', unlockAudio);
         document.removeEventListener('touchstart', unlockAudio);
         document.removeEventListener('scroll', unlockAudio);
@@ -99,6 +94,7 @@
       document.addEventListener('touchstart', unlockAudio);
       document.addEventListener('scroll', unlockAudio);
       document.addEventListener('keydown', unlockAudio);
+      tip.addEventListener('click', unlockAudio);
     });
   </script>
 
