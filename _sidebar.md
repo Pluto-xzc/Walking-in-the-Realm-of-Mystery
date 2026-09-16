@@ -44,7 +44,7 @@
 - **再探泰拉**
   - **赞歌圣咏**
     - [埃拉托](gamedata/character‌/alt.md)
-    - [帕拉斯](gamedata/character‌/plsmd)
+    - [帕拉斯](gamedata/character‌/pls.md)
     - [火神](gamedata/character‌/hs.md)
     - [断罪者](gamedata/character‌/dzz.md)
   - **凛冬无休**
