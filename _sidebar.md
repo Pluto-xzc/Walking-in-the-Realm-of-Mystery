@@ -44,10 +44,23 @@
 - **再探泰拉**
   - **赞歌圣咏**
     - [埃拉托](gamedata/character‌/alt.md)
+    - [帕拉斯](gamedata/character‌/plsmd)
+    - [火神](gamedata/character‌/hs.md)
+    - [断罪者](gamedata/character‌/dzz.md)
   - **凛冬无休**
+    - [折桠](gamedata/character‌/zy.md)
   - **圣约铸城**
+    - [莫斯提马](gamedata/character‌/mstm.md)
+    - [送葬人](gamedata/character‌/szr.md)
   - **密林悍将**
+    - [燧石](gamedata/character‌/ss.md)
+    - [百炼嘉维尔](gamedata/character‌/bljwe.md)
   - **新星科创**
+    - [布丁](gamedata/character‌/bd.md)
+    - [松果](gamedata/character‌/sg.md)
+    - [卡夫卡](gamedata/character‌/kfk.md)
+    - [豆苗](gamedata/character‌/dm.md)
+    - [罗宾](gamedata/character‌/lb.md)
   - **极寒山脉**
   - **连绵战火**
   - **PRTS**
