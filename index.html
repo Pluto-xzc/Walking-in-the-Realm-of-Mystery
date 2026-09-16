@@ -44,6 +44,39 @@
     #music-tip:hover {
       background: rgba(0, 0, 0, 0.95);
     }
+
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+      align-items: start; 
+    }
+
+    .image-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #fafafa;
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    .image-card img {
+      width: 100%;
+      height: auto;
+      border-radius: 6px;
+      border: 1px solid #eaeaea;
+    }
+
+    .image-card p {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #555;
+      text-align: center;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
@@ -61,7 +94,7 @@
       subMaxLevel: 3,
       auto2top: true,
       alias: {
-      '/.*/_sidebar.md': '/_sidebar.md'
+        '/.*/_sidebar.md': '/_sidebar.md'
       },
       doneEach: function () {
         setTimeout(() => {
