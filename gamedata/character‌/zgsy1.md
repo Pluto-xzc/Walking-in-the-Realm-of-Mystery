@@ -4,7 +4,7 @@
 
 **3 / 3　0 护甲　ARK-MN07**
 
-<img src="images/character/alt.png" alt="埃拉托" width="420">
+<img src="images/character/埃拉托.png" alt="埃拉托" width="420">
 
 </div>
 
