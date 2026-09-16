@@ -11,7 +11,6 @@
     - [E:G:O饰品](gamedata/cards/ego.md)
     - [官方牌拓展](gamedata/cards/expansion.md)
     - [通宝](gamedata/cards/coin.md)
-    - [残梦](gamedata/cards/dream.md)
     - [杀戮尖塔](gamedata/cards/tower.md)
   - **机制详解（拼音首字母排序）**
     - [特殊内容定义](gamedata/qa/special.md)
