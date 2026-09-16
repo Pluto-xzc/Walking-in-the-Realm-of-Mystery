@@ -43,7 +43,7 @@
 
 - **再探泰拉**
   - **赞歌圣咏**
-    - [埃拉托](gamedata/character‌/zgsy1.md)
+    - [埃拉托](gamedata/character‌/alt.md)
   - **凛冬无休**
   - **圣约铸城**
   - **密林悍将**
