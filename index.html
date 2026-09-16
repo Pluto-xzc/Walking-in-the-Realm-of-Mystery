@@ -44,32 +44,51 @@
       background: rgba(0, 0, 0, 0.95);
     }
 
-    #music-toggle {
+    #music-controls {
       display: none;
       position: fixed;
       bottom: 20px;
       right: 20px;
-      width: 50px;
-      height: 50px;
+      height: 45px;
       background: #ffffff;
-      border-radius: 50%;
+      border-radius: 25px;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-      cursor: pointer;
       z-index: 9999;
-      justify-content: center;
       align-items: center;
-      font-size: 26px;
-      color: #000000;
+      padding: 0 10px;
       user-select: none;
-      transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+      transition: transform 0.2s, box-shadow 0.2s;
     }
-    #music-toggle:hover {
-      transform: scale(1.1);
+    #music-controls:hover {
       box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
     }
+    
+    .music-btn {
+      font-size: 22px;
+      color: #000000;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .music-btn:hover {
+      transform: scale(1.15);
+      background: rgba(0, 0, 0, 0.05);
+    }
+    
+    .music-divider {
+      width: 1px;
+      height: 20px;
+      background-color: #e0e0e0;
+      margin: 0 5px;
+    }
+
     #music-toggle.paused {
-      background: #f0f0f0;
-      opacity: 0.7;
+      opacity: 0.5;
     }
 
     .image-grid {
@@ -109,9 +128,14 @@
 
   <audio id="bgm" preload="auto" muted></audio>
 
-  <div id="music-tip">小早川精选专辑《我超·冰》</div>
+  <div id="music-tip">小早川精选专辑《woc冰》</div>
   
-  <div id="music-toggle">🎶</div>
+  <!-- 新的胶囊控制条 -->
+  <div id="music-controls">
+    <div class="music-btn" id="music-toggle" title="播放/暂停">🎶</div>
+    <div class="music-divider"></div>
+    <div class="music-btn" id="music-next" title="下一首(随机)">⏭️</div>
+  </div>
 
   <script>
     window.$docsify = {
@@ -137,12 +161,13 @@
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
       const tip = document.getElementById('music-tip');
+      const musicControls = document.getElementById('music-controls');
       const toggleBtn = document.getElementById('music-toggle');
+      const nextBtn = document.getElementById('music-next');
       const targetVolume = 0.1;
-
       const playlist = [
         'music/bgm.mp3',
-        'music/bgm2.mp3', 
+        'music/bgm2.mp3',
         'music/bgm3.mp3',
         'music/bgm4.mp3',
         'music/bgm5.mp3',
@@ -156,15 +181,24 @@
 
       bgm.src = playlist[currentTrackIndex];
       bgm.volume = targetVolume;
-
-      bgm.addEventListener('ended', function() {
-        currentTrackIndex++;
-        if (currentTrackIndex >= playlist.length) {
+      function playRandomTrack() {
+        if (playlist.length === 0) return;
+        if (playlist.length === 1) {
           currentTrackIndex = 0;
+        } else {
+          let nextIndex = currentTrackIndex;
+          while (nextIndex === currentTrackIndex) {
+            nextIndex = Math.floor(Math.random() * playlist.length);
+          }
+          currentTrackIndex = nextIndex;
         }
+        
         bgm.src = playlist[currentTrackIndex];
-        bgm.play().catch(e => console.error('播放下一首失败:', e));
-      });
+        bgm.play().catch(e => console.error('播放失败:', e));
+        toggleBtn.textContent = '🎶';
+        toggleBtn.classList.remove('paused');
+      }
+      bgm.addEventListener('ended', playRandomTrack);
       bgm.play().then(() => {
         console.log('等待交互');
       }).catch(err => {
@@ -175,12 +209,14 @@
       const unlockAudio = () => {
         bgm.muted = false;
         bgm.volume = targetVolume;
+        
         if (bgm.paused) {
           bgm.play().catch(e => console.error('播放失败:', e));
         }
         
         tip.style.display = 'none';
-        toggleBtn.style.display = 'flex'; 
+        musicControls.style.display = 'flex'; 
+        
         document.removeEventListener('click', unlockAudio);
         document.removeEventListener('touchstart', unlockAudio);
         document.removeEventListener('scroll', unlockAudio);
@@ -193,7 +229,6 @@
       document.addEventListener('keydown', unlockAudio);
       
       tip.addEventListener('click', unlockAudio);
-
       toggleBtn.addEventListener('click', function(e) {
         e.stopPropagation(); 
         
@@ -206,6 +241,10 @@
           toggleBtn.classList.add('paused');
           toggleBtn.textContent = '⏸️';
         }
+      });
+      nextBtn.addEventListener('click', function(e) {
+        e.stopPropagation(); 
+        playRandomTrack();
       });
 
     });
