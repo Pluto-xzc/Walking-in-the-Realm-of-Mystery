@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/themes/vue.css" />
-
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.css" />
 
   <style>
@@ -45,6 +44,34 @@
       background: rgba(0, 0, 0, 0.95);
     }
 
+    #music-toggle {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      width: 50px;
+      height: 50px;
+      background: #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      cursor: pointer;
+      z-index: 9999;
+      justify-content: center;
+      align-items: center;
+      font-size: 26px;
+      color: #000000;
+      user-select: none;
+      transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+    #music-toggle:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+    #music-toggle.paused {
+      background: #f0f0f0;
+      opacity: 0.7;
+    }
+
     .image-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -52,7 +79,6 @@
       margin: 20px 0;
       align-items: start; 
     }
-
     .image-card {
       display: flex;
       flex-direction: column;
@@ -62,14 +88,12 @@
       padding: 10px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
-
     .image-card img {
       width: 100%;
       height: auto;
       border-radius: 6px;
       border: 1px solid #eaeaea;
     }
-
     .image-card p {
       margin-top: 10px;
       font-size: 14px;
@@ -83,9 +107,11 @@
 
   <div id="app">少女祈祷中...</div>
 
-  <audio id="bgm" src="music/bgm.mp3" loop preload="auto" muted></audio>
+  <audio id="bgm" preload="auto" muted></audio>
 
-  <div id="music-tip">《铁花飞》</div>
+  <div id="music-tip">小早川精选专辑《我超·冰》</div>
+  
+  <div id="music-toggle">🎶</div>
 
   <script>
     window.$docsify = {
@@ -105,30 +131,56 @@
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/docsify@4"></script>
-
   <script src="https://cdn.jsdelivr.net/npm/@mbertogliati/docsify-sidebar-collapse/dist/sidebar-collapse.min.js"></script>
 
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       const bgm = document.getElementById('bgm');
       const tip = document.getElementById('music-tip');
+      const toggleBtn = document.getElementById('music-toggle');
       const targetVolume = 0.1;
 
+      const playlist = [
+        'music/bgm.mp3',
+        'music/bgm2.mp3', 
+        'music/bgm3.mp3',
+        'music/bgm4.mp3',
+        'music/bgm5.mp3',
+        'music/bgm6.mp3',
+        'music/bgm7.mp3',
+        'music/bgm8.mp3',
+        'music/bgm9.mp3',
+        'music/bgm10.mp3'
+      ];
+      let currentTrackIndex = 0;
+
+      bgm.src = playlist[currentTrackIndex];
       bgm.volume = targetVolume;
 
+      bgm.addEventListener('ended', function() {
+        currentTrackIndex++;
+        if (currentTrackIndex >= playlist.length) {
+          currentTrackIndex = 0;
+        }
+        bgm.src = playlist[currentTrackIndex];
+        bgm.play().catch(e => console.error('播放下一首失败:', e));
+      });
       bgm.play().then(() => {
         console.log('等待交互');
       }).catch(err => {
         console.log('等待点击');
         tip.style.display = 'block';
       });
+
       const unlockAudio = () => {
         bgm.muted = false;
         bgm.volume = targetVolume;
         if (bgm.paused) {
           bgm.play().catch(e => console.error('播放失败:', e));
         }
+        
         tip.style.display = 'none';
+        toggleBtn.style.display = 'flex'; 
         document.removeEventListener('click', unlockAudio);
         document.removeEventListener('touchstart', unlockAudio);
         document.removeEventListener('scroll', unlockAudio);
@@ -139,7 +191,23 @@
       document.addEventListener('touchstart', unlockAudio);
       document.addEventListener('scroll', unlockAudio);
       document.addEventListener('keydown', unlockAudio);
+      
       tip.addEventListener('click', unlockAudio);
+
+      toggleBtn.addEventListener('click', function(e) {
+        e.stopPropagation(); 
+        
+        if (bgm.paused) {
+          bgm.play().catch(e => console.error('播放失败:', e));
+          toggleBtn.classList.remove('paused');
+          toggleBtn.textContent = '🎶';
+        } else {
+          bgm.pause();
+          toggleBtn.classList.add('paused');
+          toggleBtn.textContent = '⏸️';
+        }
+      });
+
     });
   </script>
 
