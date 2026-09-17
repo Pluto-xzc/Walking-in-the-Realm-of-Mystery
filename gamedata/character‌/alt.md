@@ -6,7 +6,8 @@
       <strong>注释：</strong>
       <br>“韵律技”机制，是“转换技”的变种，但选项变更条件变为达成“转韵”条件。</div>
   </div>
-  <div class="char-img">
-    <div class="gallery" data-images="/images/character/埃拉托.png, /images/character/黄泉.png, /images/character/小早川时一.png"></div>
-  </div>
-</div>
+   </div>
+     <div class="char-img">
+       <img src="/images/character/埃拉托.png" alt="埃拉托" style="width: 100%; max-width: 420px; height: auto;">
+     </div>
+    </div>
