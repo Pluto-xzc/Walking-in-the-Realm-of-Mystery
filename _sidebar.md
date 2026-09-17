@@ -62,9 +62,21 @@
     - [豆苗](gamedata/character‌/dm.md)
     - [罗宾](gamedata/character‌/lb.md)
   - **极寒山脉**
+    - [凛御银灰](gamedata/character‌/lyyh.md)
+    - [极光](gamedata/character‌/jg.md)
+    - [初雪](gamedata/character‌/cx.md)
+    - [锏](gamedata/character‌/j.md)
   - **连绵战火**
+    - [伊内丝](gamedata/character‌/yns.md)
+    - [隐德来希](gamedata/character‌/ydlx.md)
   - **PRTS**
+    - [普瑞赛斯](gamedata/character‌/prss.md)
   - **独行之人**
+    - [杜卡雷](gamedata/character‌/dkl.md)
+    - [奎隆，摩诃萨埵权化](gamedata/character‌/klmkscqh.md)
+    - [奎萨图什塔](gamedata/character‌/kstst.md)
+    - [特雷西斯](gamedata/character‌/tlxs.md)
+    - [安多恩](gamedata/character‌/adn.md)
   - **深海猎人**
   - **新城旧法**
   - **异乡来客**
