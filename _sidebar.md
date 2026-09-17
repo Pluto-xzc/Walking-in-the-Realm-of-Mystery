@@ -78,9 +78,24 @@
     - [特雷西斯](gamedata/character‌/tlxs.md)
     - [安多恩](gamedata/character‌/adn.md)
   - **深海猎人**
+    - [斯卡蒂](gamedata/character‌/skd.md)
   - **新城旧法**
+    - [缄默德克萨斯](gamedata/character‌/jmdkss.md)
+    - [子月](gamedata/character‌/zy1.md)
+    - [弑君者](gamedata/character‌/sjz.md)
   - **异乡来客**
+    - [闪击](gamedata/character‌/sj.md)
+    - [双月](gamedata/character‌/sy.md)
+    - [艾拉](gamedata/character‌/al.md)
+    - [泰拉大陆调查团](gamedata/character‌/tldldct.md)
+    - [火龙S黑角](gamedata/character‌/hlshj.md)
+    - [麒麟R夜刀](gamedata/character‌/qlryd.md)
+    - [战车](gamedata/character‌/zc.md)
+    - [灰烬](gamedata/character‌/hj.md)
   - **恒明灯塔**
+    - [棘刺](gamedata/character‌/cj.md)
+    - [海沫](gamedata/character‌/hm.md)
+    - [深靛](gamedata/character‌/sd.md)
   - **无垠花园**
   - **虹灯闪烁**
   - **炎律灼灼**
