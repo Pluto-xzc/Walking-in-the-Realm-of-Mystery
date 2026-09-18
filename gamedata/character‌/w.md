@@ -9,6 +9,7 @@
     </div>
   </div>
       <div class="char-img">
-      <img src="/images/character/望.png" alt="望" style="width: 100%; max-width: 420px; height: auto;">
+      <div class="gallery" data-images="/images/character/望.png, /images/excards/瑕.png">
+      </div>
     </div>
   </div>
