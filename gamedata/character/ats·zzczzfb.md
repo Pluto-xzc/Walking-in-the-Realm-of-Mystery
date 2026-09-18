@@ -8,6 +8,7 @@
     </div>
   </div>
       <div class="char-img">
-      <img src="/images/character/奥提斯·蜘蛛巢中指父辈.png" alt="奥提斯·蜘蛛巢中指父辈" style="width: 100%; max-width: 420px; height: auto;">
+      <div class="gallery" data-images="/images/character/奥提斯·蜘蛛巢中指父辈.png, /images/excards/传说之剑·莱瓦汀.png, /images/excards/拆开包装吧.png">
+      </div>
     </div>
   </div>
