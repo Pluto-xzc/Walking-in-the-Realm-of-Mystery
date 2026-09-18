@@ -32,7 +32,7 @@
     - [P](gamedata/qa/P.md)
     - [Q](gamedata/qa/Q.md)
     - [R](gamedata/qa/R.md)
-    - [S](gamedata/qa/D.md)
+    - [S](gamedata/qa/S.md)
     - [T](gamedata/qa/T.md)
     - [U](gamedata/qa/U.md)
     - [V](gamedata/qa/V.md)
