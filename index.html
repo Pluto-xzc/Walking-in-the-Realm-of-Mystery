@@ -358,7 +358,7 @@
       overflow-x: hidden;
       max-height: calc(100vh - 110px);
       box-sizing: border-box;
-      padding: 2px 4px;
+      padding: 2px 0; /* 修正：左右不留额外空隙，使卡片与搜索框严格对齐 */
       z-index: 39;
       scrollbar-width: thin;
     }
@@ -390,7 +390,7 @@
 
     #sidebar-search-results .search-result {
       display: block;
-      padding: 9px 12px;
+      padding: 9px 12px 9px 34px; /* 修正：左边距 34px，与搜索框输入文字对齐 */
       background: #ffffff;
       border: 1px solid #ececec;
       border-radius: 8px;
@@ -842,6 +842,8 @@
             if (/^[a-z]+:\/\//i.test(route)) continue;
             route = route.split('#')[0].split('?')[0];
             if (!route) continue;
+            // 过滤掉主页和根路径，避免抓取到原代码
+            if (route === '' || route === '/' || route.toLowerCase() === 'index.html') continue;
             if (seen[route]) continue;
             seen[route] = true;
             pages.push({
@@ -864,7 +866,13 @@
                 return res.text();
               })
               .then(function (text) {
+                // 如果抓取的是 html 文件，直接丢弃，避免搜到原代码
+                if (text.includes('<!DOCTYPE html>') || text.includes('window.$docsify')) {
+                  throw new Error('skip html');
+                }
                 const plain = text
+                  .replace(/<script[\s\S]*?<\/script>/gi, ' ') // 移除 script 内容
+                  .replace(/<style[\s\S]*?<\/style>/gi, ' ')   // 移除 style 内容
                   .replace(/```[\s\S]*?```/g, ' ')
                   .replace(/`[^`]+`/g, ' ')
                   .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
