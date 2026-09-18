@@ -9,6 +9,7 @@
     </div>
   </div>
       <div class="char-img">
-      <img src="/images/character/克里萨尔.png" alt="克里萨尔" style="width: 100%; max-width: 420px; height: auto;">
+      <div class="gallery" data-images="/images/character/克里萨尔.png, /images/excards/击针.png">
+      </div>
     </div>
   </div>
