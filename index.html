@@ -263,6 +263,166 @@
       letter-spacing: 1px;
     }
 
+    /* ============ 侧边栏搜索栏样式 ============ */
+
+    /* 搜索时隐藏原来的侧边栏目录 */
+    body.search-mode .sidebar-nav {
+      display: none !important;
+    }
+
+    /* 底部搜索栏：与汉堡按钮同排，圆角矩形 */
+    #sidebar-search-bar {
+      position: fixed;
+      bottom: 10px;
+      height: 36px;
+      background: #ffffff;
+      border: 1px solid #e3e3e3;
+      border-radius: 18px;
+      display: none; /* 由 JS 控制显示 */
+      align-items: center;
+      padding: 0 8px 0 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      z-index: 40;
+      box-sizing: border-box;
+      font-family: inherit;
+      transition: box-shadow 0.2s, border-color 0.2s;
+    }
+    #sidebar-search-bar:focus-within {
+      border-color: #42b983;
+      box-shadow: 0 2px 12px rgba(66, 185, 131, 0.22);
+    }
+    #sidebar-search-bar .search-icon {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9a9a9a;
+      margin-right: 7px;
+      transition: color 0.2s;
+    }
+    #sidebar-search-bar:focus-within .search-icon {
+      color: #42b983;
+    }
+    #sidebar-search-bar .search-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 100%;
+      border: none;
+      outline: none;
+      background: transparent;
+      font-size: 13px;
+      color: #333;
+      padding: 0;
+      margin: 0;
+      font-family: inherit;
+      line-height: 1;
+    }
+    #sidebar-search-bar .search-input::placeholder {
+      color: #b6b6b6;
+    }
+    #sidebar-search-bar .search-clear {
+      flex: 0 0 auto;
+      width: 20px;
+      height: 20px;
+      border: none;
+      padding: 0;
+      background: transparent;
+      color: #a5a5a5;
+      cursor: pointer;
+      border-radius: 50%;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      line-height: 1;
+      font-family: inherit;
+      transition: background 0.15s, color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #sidebar-search-bar .search-clear:hover {
+      background: rgba(0, 0, 0, 0.07);
+      color: #333;
+    }
+    #sidebar-search-bar.has-value .search-clear {
+      display: flex;
+    }
+
+    /* 搜索结果面板：从搜索栏向上生长 */
+    #sidebar-search-results {
+      position: fixed;
+      bottom: 54px; /* 搜索栏 bottom(10) + 高度(36) + 间距(8) */
+      display: none;
+      flex-direction: column-reverse; /* 第一条结果紧贴搜索栏 */
+      gap: 6px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      max-height: calc(100vh - 110px);
+      box-sizing: border-box;
+      padding: 2px 4px;
+      z-index: 39;
+      scrollbar-width: thin;
+    }
+    #sidebar-search-results::-webkit-scrollbar {
+      width: 6px;
+    }
+    #sidebar-search-results::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.15);
+      border-radius: 3px;
+    }
+    #sidebar-search-results::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #sidebar-search-results .search-status {
+      padding: 16px 12px;
+      text-align: center;
+      font-size: 13px;
+      color: #9a9a9a;
+      background: #ffffff;
+      border-radius: 8px;
+      border: 1px solid #ececec;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+    #sidebar-search-results .search-empty {
+      color: #b07a3a;
+      font-size: 13.5px;
+    }
+
+    #sidebar-search-results .search-result {
+      display: block;
+      padding: 9px 12px;
+      background: #ffffff;
+      border: 1px solid #ececec;
+      border-radius: 8px;
+      text-decoration: none;
+      color: #333;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      box-sizing: border-box;
+    }
+    #sidebar-search-results .search-result:hover {
+      background: #f5fdf9;
+      border-color: #b7e4cd;
+    }
+    #sidebar-search-results .search-result-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #2f9e6e;
+      line-height: 1.35;
+      margin-bottom: 3px;
+      word-break: break-word;
+    }
+    #sidebar-search-results .search-result-snippet {
+      font-size: 11.5px;
+      color: #8a8a8a;
+      line-height: 1.45;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
     @media screen and (max-width: 540px) {
       .gallery {
         max-width: 100%;
@@ -318,6 +478,15 @@
             setTimeout(() => {
               window.dispatchEvent(new Event('resize'));
             }, 150);
+            /* 搜索模式下，每次页面切换后保持侧边栏目录被隐藏 */
+            if (window.__searchActive) {
+              const nav = document.querySelector('.sidebar-nav');
+              if (nav) nav.style.display = 'none';
+            }
+            /* 页面切换后重新摆放搜索栏 */
+            if (typeof window.__positionSearchBar === 'function') {
+              window.__positionSearchBar();
+            }
           });
         }
       ]
@@ -528,5 +697,376 @@
     });
   </script>
 
+  <!-- ==================== 侧边栏搜索栏 ==================== -->
+  <script>
+    (function () {
+      'use strict';
+
+      /* ---------- 状态 ---------- */
+      const CONCURRENCY = 8;          // 索引并发数
+      let searchIndex = null;         // [{route, title, plain}]
+      let buildingPromise = null;     // 索引构建中的 Promise
+      let searchActive = false;       // 是否处于搜索替换侧边栏状态
+      let searchBar = null;
+      let resultsPanel = null;
+      let searchInput = null;
+      let uiReady = false;
+      let debounceTimer = null;
+      let lastSidebarKey = '';
+
+      window.__searchActive = false;
+
+      /* ---------- 工具函数 ---------- */
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+
+      /* ---------- 创建 UI ---------- */
+      function buildUI() {
+        if (uiReady) return;
+        const sidebar = document.querySelector('.sidebar');
+        if (!sidebar) return;
+        uiReady = true;
+
+        /* 搜索栏 */
+        searchBar = document.createElement('div');
+        searchBar.id = 'sidebar-search-bar';
+        searchBar.innerHTML =
+          '<span class="search-icon">' +
+            '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
+              'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+              '<circle cx="11" cy="11" r="7"></circle>' +
+              '<line x1="16.5" y1="16.5" x2="21" y2="21"></line>' +
+            '</svg>' +
+          '</span>' +
+          '<input type="text" class="search-input" placeholder="搜索" ' +
+            'autocomplete="off" spellcheck="false" />' +
+          '<button class="search-clear" type="button" aria-label="清除">✕</button>';
+
+        /* 结果面板 */
+        resultsPanel = document.createElement('div');
+        resultsPanel.id = 'sidebar-search-results';
+
+        document.body.appendChild(searchBar);
+        document.body.appendChild(resultsPanel);
+
+        searchInput = searchBar.querySelector('.search-input');
+        const clearBtn = searchBar.querySelector('.search-clear');
+
+        /* 点击搜索栏任意位置聚焦输入框 */
+        searchBar.addEventListener('click', function (e) {
+          if (e.target.closest('.search-clear')) return;
+          searchInput.focus();
+        });
+
+        /* 输入事件 */
+        searchInput.addEventListener('input', function () {
+          const v = this.value;
+          searchBar.classList.toggle('has-value', v.length > 0);
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(function () {
+            renderResults(v);
+          }, 100);
+        });
+
+        /* 清除按钮 */
+        clearBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          closeSearch();
+        });
+
+        positionSearchBar();
+
+        /* 空闲时预构建索引（不阻塞首屏） */
+        setTimeout(function () {
+          buildIndex().catch(function () {});
+        }, 1500);
+      }
+
+      /* ---------- 定位搜索栏（与汉堡按钮同行，左右留空隙） ---------- */
+      function positionSearchBar() {
+        if (!searchBar || !resultsPanel) return;
+        const sidebar = document.querySelector('.sidebar');
+        if (!sidebar) return;
+
+        const rect = sidebar.getBoundingClientRect();
+        const sidebarVisible = rect.right > 60 && rect.width > 100;
+
+        if (!sidebarVisible) {
+          searchBar.style.display = 'none';
+          if (!searchActive) resultsPanel.style.display = 'none';
+          return;
+        }
+
+        /* 计算搜索栏左边界：紧跟汉堡按钮右侧，留一点间隙 */
+        let leftOffset = 52;
+        const toggle = document.querySelector('.sidebar-toggle');
+        if (toggle) {
+          const tr = toggle.getBoundingClientRect();
+          const rel = tr.right - rect.left;
+          if (rel > 20 && rel < 140) leftOffset = rel + 6;
+        }
+
+        const left = rect.left + leftOffset;
+        const width = Math.max(120, rect.width - leftOffset - 16); // 右侧留 16px
+
+        searchBar.style.display = 'flex';
+        searchBar.style.left = left + 'px';
+        searchBar.style.width = width + 'px';
+
+        resultsPanel.style.left = left + 'px';
+        resultsPanel.style.width = width + 'px';
+      }
+      window.__positionSearchBar = positionSearchBar;
+
+      /* ---------- 构建搜索索引 ---------- */
+      function buildIndex() {
+        if (searchIndex) return Promise.resolve(searchIndex);
+        if (buildingPromise) return buildingPromise;
+
+        buildingPromise = (function () {
+          const links = Array.prototype.slice.call(
+            document.querySelectorAll('.sidebar-nav a[href]')
+          );
+          const pages = [];
+          const seen = Object.create(null);
+
+          for (let i = 0; i < links.length; i++) {
+            const a = links[i];
+            const raw = a.getAttribute('href') || '';
+            let route = raw;
+            if (route.indexOf('#/') === 0) route = route.slice(2);
+            else if (route.charAt(0) === '#') continue;
+            if (/^[a-z]+:\/\//i.test(route)) continue;
+            route = route.split('#')[0].split('?')[0];
+            if (!route) continue;
+            if (seen[route]) continue;
+            seen[route] = true;
+            pages.push({
+              route: route,
+              title: (a.textContent || '').trim()
+            });
+          }
+
+          const arr = new Array(pages.length);
+          let cursor = 0;
+
+          function worker() {
+            if (cursor >= pages.length) return Promise.resolve();
+            const i = cursor++;
+            const p = pages[i];
+
+            return fetch(p.route)
+              .then(function (res) {
+                if (!res.ok) throw new Error('bad');
+                return res.text();
+              })
+              .then(function (text) {
+                const plain = text
+                  .replace(/```[\s\S]*?```/g, ' ')
+                  .replace(/`[^`]+`/g, ' ')
+                  .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+                  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+                  .replace(/<[^>]+>/g, ' ')
+                  .replace(/[#>*_~|]/g, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                arr[i] = { route: p.route, title: p.title, plain: plain };
+              })
+              .catch(function () {
+                arr[i] = { route: p.route, title: p.title, plain: '' };
+              })
+              .then(function () {
+                return worker();
+              });
+          }
+
+          const jobs = [];
+          for (let k = 0; k < CONCURRENCY; k++) jobs.push(worker());
+
+          return Promise.all(jobs).then(function () {
+            searchIndex = arr.filter(Boolean);
+            return searchIndex;
+          });
+        })();
+
+        return buildingPromise;
+      }
+
+      /* ---------- 执行搜索 ---------- */
+      function performSearch(query) {
+        if (!searchIndex) return [];
+        const q = query.toLowerCase();
+        const out = [];
+
+        for (let i = 0; i < searchIndex.length; i++) {
+          const page = searchIndex[i];
+          const title = page.title || '';
+          const plain = page.plain || '';
+          const tIdx = title.toLowerCase().indexOf(q);
+          const cIdx = plain.toLowerCase().indexOf(q);
+
+          if (tIdx < 0 && cIdx < 0) continue;
+
+          let snippet = '';
+          if (cIdx >= 0) {
+            const start = Math.max(0, cIdx - 18);
+            const end = Math.min(plain.length, cIdx + q.length + 42);
+            snippet = plain.slice(start, end).trim();
+            if (start > 0) snippet = '…' + snippet;
+            if (end < plain.length) snippet += '…';
+          }
+
+          out.push({
+            route: page.route,
+            title: title || page.route,
+            snippet: snippet,
+            titleMatch: tIdx >= 0
+          });
+        }
+
+        /* 标题命中的排前面，标题短的排前面 */
+        out.sort(function (a, b) {
+          if (a.titleMatch !== b.titleMatch) return a.titleMatch ? -1 : 1;
+          return a.title.length - b.title.length;
+        });
+
+        return out;
+      }
+
+      /* ---------- 渲染结果（替换侧边栏） ---------- */
+      function renderResults(rawQuery) {
+        if (!resultsPanel || !searchBar) return;
+
+        const q = (rawQuery || '').trim();
+
+        if (!q) {
+          resultsPanel.style.display = 'none';
+          resultsPanel.innerHTML = '';
+          setSearchActive(false);
+          return;
+        }
+
+        /* 索引未就绪：先显示加载中 */
+        if (!searchIndex) {
+          resultsPanel.innerHTML =
+            '<div class="search-status">少女搜索中…</div>';
+          resultsPanel.style.display = 'flex';
+          setSearchActive(true);
+
+          buildIndex()
+            .then(function () {
+              if (searchInput && searchInput.value.trim() === q) {
+                renderResults(q);
+              }
+            })
+            .catch(function () {
+              resultsPanel.innerHTML =
+                '<div class="search-status search-empty">搜索失败，请稍后再试</div>';
+            });
+          return;
+        }
+
+        const items = performSearch(q);
+
+        if (items.length === 0) {
+          resultsPanel.innerHTML =
+            '<div class="search-status search-empty">你要搜索的东西被⑨拿走了</div>';
+        } else {
+          const html = items.map(function (r) {
+            const href = '#/' + r.route.replace(/\.md$/i, '');
+            return (
+              '<a class="search-result" href="' + escapeHtml(href) + '">' +
+                '<div class="search-result-title">' + escapeHtml(r.title) + '</div>' +
+                (r.snippet
+                  ? '<div class="search-result-snippet">' +
+                      escapeHtml(r.snippet) +
+                    '</div>'
+                  : '') +
+              '</a>'
+            );
+          }).join('');
+          resultsPanel.innerHTML = html;
+        }
+
+        resultsPanel.style.display = 'flex';
+        setSearchActive(true);
+      }
+
+      /* ---------- 状态切换 ---------- */
+      function setSearchActive(active) {
+        searchActive = !!active;
+        window.__searchActive = searchActive;
+        document.body.classList.toggle('search-mode', searchActive);
+
+        const nav = document.querySelector('.sidebar-nav');
+        if (nav) {
+          if (searchActive) nav.style.display = 'none';
+          else nav.style.display = '';
+        }
+      }
+
+      function closeSearch() {
+        if (searchInput) searchInput.value = '';
+        if (searchBar) searchBar.classList.remove('has-value');
+        if (resultsPanel) {
+          resultsPanel.innerHTML = '';
+          resultsPanel.style.display = 'none';
+        }
+        setSearchActive(false);
+      }
+
+      /* ---------- 点击外部 / 小叉号关闭 ---------- */
+      document.addEventListener('mousedown', function (e) {
+        if (!searchActive) return;
+        if (searchBar && searchBar.contains(e.target)) return;
+        if (resultsPanel && resultsPanel.contains(e.target)) return;
+        if (e.target.closest && e.target.closest('.sidebar')) return;
+        closeSearch();
+      });
+
+      document.addEventListener('touchstart', function (e) {
+        if (!searchActive) return;
+        const t = e.target;
+        if (searchBar && searchBar.contains(t)) return;
+        if (resultsPanel && resultsPanel.contains(t)) return;
+        if (t.closest && t.closest('.sidebar')) return;
+        closeSearch();
+      }, { passive: true });
+
+      /* ---------- 初始化 ---------- */
+      function tryInit() {
+        if (document.querySelector('.sidebar')) {
+          buildUI();
+        } else {
+          setTimeout(tryInit, 200);
+        }
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryInit);
+      } else {
+        tryInit();
+      }
+
+      window.addEventListener('resize', positionSearchBar);
+
+      /* 侧边栏折叠/展开时重新定位搜索栏 */
+      setInterval(function () {
+        if (!uiReady) return;
+        const sidebar = document.querySelector('.sidebar');
+        if (!sidebar) return;
+        const r = sidebar.getBoundingClientRect();
+        const key = Math.round(r.left) + ',' + Math.round(r.width);
+        if (key !== lastSidebarKey) {
+          lastSidebarKey = key;
+          positionSearchBar();
+        }
+      }, 300);
+
+    })();
+  </script>
 </body>
 </html>
