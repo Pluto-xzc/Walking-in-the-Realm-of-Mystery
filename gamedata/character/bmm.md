@@ -8,6 +8,7 @@
     </div>
   </div>
       <div class="char-img">
-      <img src="/images/character/斑目貘.png" alt="斑目貘" style="width: 100%; max-width: 420px; height: auto;">
+      <div class="gallery" data-images="/images/character/斑目貘.png, /images/excards/手帕.png">
+      </div>
     </div>
   </div>
