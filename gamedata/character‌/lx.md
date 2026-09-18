@@ -11,6 +11,7 @@
     </div>
   </div>
       <div class="char-img">
-      <img src="/images/character/良秀.png" alt="良秀" style="width: 100%; max-width: 420px; height: auto;">
+      <div class="gallery" data-images="/images/character/良秀.png, /images/excards/加速的未来.png,  /images/excards/赫尔墨斯.png,  /images/excards/过人的毅力.png,  /images/excards/人体观剧.png,  /images/excards/天杀星伤.png ">
+      </div>
     </div>
   </div>
