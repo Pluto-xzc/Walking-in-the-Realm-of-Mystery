@@ -172,77 +172,182 @@
     - [薇欧拉](gamedata/character/wol.md)
 - **初行塔卫**
   - **自然**
+    - [萤石](gamedata/character/ys.md)
 
 - **世界计划**
   - **25时，Nightcord见**
+    - [宵崎奏](gamedata/character/xqz.md)
 
 - **冠位指定**
   - **caster**
+    - [久远寺有珠](gamedata/character/jysyz.md)
   - **saber**
+    - [理查一世](gamedata/character/lcys.md)
 
 - **星际开拓**
   - **孤寒行星**
+    - [佩拉](gamedata/character/pl.md)
+    - [杰帕德](gamedata/character/jpd.md)
+    - [娜塔莎](gamedata/character/nts.md)
+    - [卢卡](gamedata/character/lk.md)
+    - [希儿](gamedata/character/xe.md)
   - **宇宙之客**
+    - [阮·梅](gamedata/character/r·m.md)
+    - [黑塔](gamedata/character/ht.md)
+    - [大黑塔](gamedata/character/dht.md)
   - **星核猎手**
+    - [流萤](gamedata/character/ly.md)
+    - [刃](gamedata/character/r.md)
+    - [银狼](gamedata/character/yl.md)
   - **翁法罗斯**
+    - [阿格莱亚](gamedata/character/agly.md)
   - **匹诺康尼**
+    - [星期日](gamedata/character/xqr.md)
+    - [乱破](gamedata/character/lp.md)
+    - [知更鸟](gamedata/character/zgn.md)
   - **假面愚者**
+    - [花火](gamedata/character/hh.md)
   - **长行旅客**
+    - [波提欧](gamedata/character/bto.md)
+    - [黄泉](gamedata/character/hq.md)
+    - [银枝](gamedata/character/yz.md)
+    - [真理医生](gamedata/character/zlys.md)
   - **星际公司**
+    - [翡翠](gamedata/character/fc.md)
+    - [砂金](gamedata/character/sj1.md)
   - **曜青仙舟**
+    - [貘泽](gamedata/character/mz.md)
+    - [飞霄](gamedata/character/fx.md)
   - **罗浮仙舟**
+    - [素裳](gamedata/character/ss1.md)
+    - [驭空](gamedata/character/yk.md)
+    - [寒鸦](gamedata/character/hy.md)
+    - [桂乃芬](gamedata/character/gnf.md)
+    - [停云](gamedata/character/ty.md)
+    - [青雀](gamedata/character/qq.md)
+    - [藿藿](gamedata/character/hh1.md)
 
 - **空匣之庭**
   - **格黑娜**
+    - [枣伊吕波](gamedata/character/zylb.md)
   - **阿里乌斯**
+    - [锭前纱织](gamedata/character/dqsz.md)
   - **千年**
+    - [花冈柚子](gamedata/character/hgyz.md)
+    - [生盐诺亚](gamedata/character/syny.md)
   - **圣三一**
+    - [伊洛玛丽](gamedata/character/ylml.md)
+    - [柚鸟夏](gamedata/character/ynx.md)
+    - [下江小春](gamedata/character/xjxc.md)
+    - [古关忧](gamedata/character/ggy.md)
 
 - **东方轶闻**
   - **红魔馆**
+    - [芙兰朵露](gamedata/character/fldl.md)
 
 - **暗影诗篇**
   - **巫师**
+    - [桃乐丝](gamedata/character/tls.md)
   - **皇家护卫**
+    - [芭芭萝丝](gamedata/character/bbls.md)
   - **超越者**
+    - [克里萨尔](gamedata/character/klse.md)
   - **龙族**
+    - [相抓津](gamedata/character/xzj.md)
+    - [璐米欧儿](gamedata/character/lmoe.md)
+    - [法露特&米莉亚姆](gamedata/character/flt&mlym.md)
+    - [菲琳](gamedata/character/fl.md)
 
 - **异邦旅人**
   - **蒙德**
+    - [迪卢克](gamedata/character/dlk.md)
   - **璃月**
+    - [烟绯](gamedata/character/yf.md)
+    - [钟离](gamedata/character/zl.md)
   - **稻妻**
+    - [珊瑚宫心海](gamedata/character/shgxh.md)
+    - [枫原万叶](gamedata/character/fywy.md)
   - **枫丹**
+    - [克洛琳德](gamedata/character/klld.md)
 
 - **罪孽异响**
+  - **都市**
+    - [贾丘](gamedata/character/jq.md)
   - **异想体**
+    - [绅士精灵](gamedata/character/ssjl.md)
   - **罪人**
+    - [奥提斯·蜘蛛巢中指父辈](gamedata/character/ats·zzczzfb.md)
+    - [良秀](gamedata/character/lx.md)
+    - [辛克莱·黑兽-酉](gamedata/character/xkl·hs-y.md)
+    - [希斯克里夫·空即是色](gamedata/character/xsklf·kjss.md)
+    - [辛克莱·污血泣泪](gamedata/character/xkl·wxql.md)
+    - [默尔索·拇指东部指挥官](gamedata/character/mes·mzdbzhg.md)
+    - [良秀·轻蔑，敬畏](gamedata/character/lx·qm,jw.md)
+    - [格里高尔·黑兽-巳](gamedata/character/glge·hs-s.md)
+    - [浮士德·黑兽-卯魁首](gamedata/character/fsd·hs-mks.md)
+    - [李箱·次元撕裂者](gamedata/character/lx·cyslz.md)
+    - [罗佳·泪锋之剑](gamedata/character/lj·lfzj.md)
 
 - **光启新篇**
+  - [渡](gamedata/character/d.md)
 
 - **少女前线**
+  - [RO635](gamedata/character/ro635.md)
 
 - **莉可莉丝**
+  - [锦木千束](gamedata/character/jmqs.md)
 
 - **溯回暴雨**
+  - [柏林以东](gamedata/character/blyd.md)
 
 - **宙埃之世**
+  - [小早川时一](gamedata/character/xzcsy.md)
+  - [萨腾努斯](gamedata/character/stns.md)
+  - [威诺希](gamedata/character/wnx.md)
+  - [尤利乌斯·凯撒](gamedata/character/ylws·ks.md)
+  - [普路同](gamedata/character/plt.md)
+  - [埃已](gamedata/character/ay.md)
+  - [阿尔忒弥斯](gamedata/character/aetms.md)
 
 - **决斗之仪**
+  - [屋敷童](gamedata/character/wft.md)
+  - [No.107银河眼时空龙](gamedata/character/no.107yhyskl.md)
+  - [K9-17号饭纲](gamedata/character/k9-17hfg.md)
+  - [维舍斯](gamedata/character/wss.md)
 
 - **赤眼骇歌**
+  - [铃屋什造](gamedata/character/lwsz.md)
+  - [有马贵将](gamedata/character/ymgj.md)
+  - [米林才子](gamedata/character/mlcz.md)
 
 - **罪恶救赎**
+  - [柊舞缇娜](gamedata/character/zwtn.md)
 
 - **反叛无休**
+  - [夏利欧](gamedata/character/xlo.md)
+  - [枢木朱雀](gamedata/character/smzq.md)
+  - [鲁路修](gamedata/character/llx.md)
+  - [C.C.](gamedata/character/c.c..md)
 
 - **旧日审判**
+  - [圆头耄耋](gamedata/character/ytmd.md)
 
 - **宗教救赎**
+  - [Bumbino](gamedata/character/bumbino.md)
 
 - **雷索纳斯**
+  - [罗洁尔·定格](gamedata/character/lje·dg.md)
 
 - **以下犯上**
+  - [斑目貘](gamedata/character/bmm.md)
 
 - **失语之声**
+  - [小封条](gamedata/character/xft.md)
+
+- **魔族精兵**
+  - [山城恋](gamedata/character/scl.md)
 
 - **虚拟现实**
+  - [Veibae](gamedata/character/veibae.md)
+  - [东雪莲](gamedata/character/dxl.md)
+  - [永雏塔菲](gamedata/character/yctf.md)
