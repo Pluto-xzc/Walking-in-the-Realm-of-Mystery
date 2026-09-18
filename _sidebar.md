@@ -93,7 +93,7 @@
     - [战车](gamedata/character‌/zc.md)
     - [灰烬](gamedata/character‌/hj.md)
   - **恒明灯塔**
-    - [棘刺](gamedata/character‌/cj.md)
+    - [棘刺](gamedata/character‌/jc.md)
     - [海沫](gamedata/character‌/hm.md)
     - [深靛](gamedata/character‌/sd.md)
   - **无垠花园**
