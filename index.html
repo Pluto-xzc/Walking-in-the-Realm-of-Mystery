@@ -263,14 +263,10 @@
       letter-spacing: 1px;
     }
 
-    /* ============ 侧边栏搜索栏样式 ============ */
-
-    /* 搜索时隐藏原来的侧边栏目录 */
     body.search-mode .sidebar-nav {
       display: none !important;
     }
 
-    /* 底部搜索栏：与汉堡按钮同排，圆角矩形 */
     #sidebar-search-bar {
       position: fixed;
       bottom: 10px;
@@ -278,7 +274,7 @@
       background: #ffffff;
       border: 1px solid #e3e3e3;
       border-radius: 18px;
-      display: none; /* 由 JS 控制显示 */
+      display: none;
       align-items: center;
       padding: 0 8px 0 12px;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -347,18 +343,17 @@
       display: flex;
     }
 
-    /* 搜索结果面板：从搜索栏向上生长 */
     #sidebar-search-results {
       position: fixed;
-      bottom: 54px; /* 搜索栏 bottom(10) + 高度(36) + 间距(8) */
+      bottom: 54px;
       display: none;
-      flex-direction: column-reverse; /* 第一条结果紧贴搜索栏 */
+      flex-direction: column-reverse;
       gap: 6px;
       overflow-y: auto;
       overflow-x: hidden;
       max-height: calc(100vh - 110px);
       box-sizing: border-box;
-      padding: 2px 0; /* 修正：左右不留额外空隙，使卡片与搜索框严格对齐 */
+      padding: 2px 0;
       z-index: 39;
       scrollbar-width: thin;
     }
@@ -390,7 +385,7 @@
 
     #sidebar-search-results .search-result {
       display: block;
-      padding: 9px 12px 9px 34px; /* 修正：左边距 34px，与搜索框输入文字对齐 */
+      padding: 9px 12px;
       background: #ffffff;
       border: 1px solid #ececec;
       border-radius: 8px;
@@ -478,12 +473,10 @@
             setTimeout(() => {
               window.dispatchEvent(new Event('resize'));
             }, 150);
-            /* 搜索模式下，每次页面切换后保持侧边栏目录被隐藏 */
             if (window.__searchActive) {
               const nav = document.querySelector('.sidebar-nav');
               if (nav) nav.style.display = 'none';
             }
-            /* 页面切换后重新摆放搜索栏 */
             if (typeof window.__positionSearchBar === 'function') {
               window.__positionSearchBar();
             }
@@ -697,16 +690,13 @@
     });
   </script>
 
-  <!-- ==================== 侧边栏搜索栏 ==================== -->
   <script>
     (function () {
       'use strict';
-
-      /* ---------- 状态 ---------- */
-      const CONCURRENCY = 8;          // 索引并发数
-      let searchIndex = null;         // [{route, title, plain}]
-      let buildingPromise = null;     // 索引构建中的 Promise
-      let searchActive = false;       // 是否处于搜索替换侧边栏状态
+      const CONCURRENCY = 8;
+      let searchIndex = null;
+      let buildingPromise = null;
+      let searchActive = false;
       let searchBar = null;
       let resultsPanel = null;
       let searchInput = null;
@@ -716,21 +706,18 @@
 
       window.__searchActive = false;
 
-      /* ---------- 工具函数 ---------- */
       function escapeHtml(s) {
         return String(s).replace(/[&<>"']/g, function (c) {
           return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
         });
       }
 
-      /* ---------- 创建 UI ---------- */
       function buildUI() {
         if (uiReady) return;
         const sidebar = document.querySelector('.sidebar');
         if (!sidebar) return;
         uiReady = true;
 
-        /* 搜索栏 */
         searchBar = document.createElement('div');
         searchBar.id = 'sidebar-search-bar';
         searchBar.innerHTML =
@@ -745,7 +732,6 @@
             'autocomplete="off" spellcheck="false" />' +
           '<button class="search-clear" type="button" aria-label="清除">✕</button>';
 
-        /* 结果面板 */
         resultsPanel = document.createElement('div');
         resultsPanel.id = 'sidebar-search-results';
 
@@ -755,13 +741,11 @@
         searchInput = searchBar.querySelector('.search-input');
         const clearBtn = searchBar.querySelector('.search-clear');
 
-        /* 点击搜索栏任意位置聚焦输入框 */
         searchBar.addEventListener('click', function (e) {
           if (e.target.closest('.search-clear')) return;
           searchInput.focus();
         });
 
-        /* 输入事件 */
         searchInput.addEventListener('input', function () {
           const v = this.value;
           searchBar.classList.toggle('has-value', v.length > 0);
@@ -770,22 +754,17 @@
             renderResults(v);
           }, 100);
         });
-
-        /* 清除按钮 */
         clearBtn.addEventListener('click', function (e) {
           e.stopPropagation();
           closeSearch();
         });
 
         positionSearchBar();
-
-        /* 空闲时预构建索引（不阻塞首屏） */
         setTimeout(function () {
           buildIndex().catch(function () {});
         }, 1500);
       }
 
-      /* ---------- 定位搜索栏（与汉堡按钮同行，左右留空隙） ---------- */
       function positionSearchBar() {
         if (!searchBar || !resultsPanel) return;
         const sidebar = document.querySelector('.sidebar');
@@ -799,8 +778,6 @@
           if (!searchActive) resultsPanel.style.display = 'none';
           return;
         }
-
-        /* 计算搜索栏左边界：紧跟汉堡按钮右侧，留一点间隙 */
         let leftOffset = 52;
         const toggle = document.querySelector('.sidebar-toggle');
         if (toggle) {
@@ -810,18 +787,16 @@
         }
 
         const left = rect.left + leftOffset;
-        const width = Math.max(120, rect.width - leftOffset - 16); // 右侧留 16px
+        const width = Math.max(120, rect.width - leftOffset - 16);
 
         searchBar.style.display = 'flex';
         searchBar.style.left = left + 'px';
         searchBar.style.width = width + 'px';
-
-        resultsPanel.style.left = left + 'px';
-        resultsPanel.style.width = width + 'px';
+        resultsPanel.style.left = rect.left + 'px';
+        resultsPanel.style.width = Math.max(120, rect.width - 16) + 'px';
       }
       window.__positionSearchBar = positionSearchBar;
 
-      /* ---------- 构建搜索索引 ---------- */
       function buildIndex() {
         if (searchIndex) return Promise.resolve(searchIndex);
         if (buildingPromise) return buildingPromise;
@@ -842,7 +817,6 @@
             if (/^[a-z]+:\/\//i.test(route)) continue;
             route = route.split('#')[0].split('?')[0];
             if (!route) continue;
-            // 过滤掉主页和根路径，避免抓取到原代码
             if (route === '' || route === '/' || route.toLowerCase() === 'index.html') continue;
             if (seen[route]) continue;
             seen[route] = true;
@@ -866,13 +840,12 @@
                 return res.text();
               })
               .then(function (text) {
-                // 如果抓取的是 html 文件，直接丢弃，避免搜到原代码
                 if (text.includes('<!DOCTYPE html>') || text.includes('window.$docsify')) {
                   throw new Error('skip html');
                 }
                 const plain = text
-                  .replace(/<script[\s\S]*?<\/script>/gi, ' ') // 移除 script 内容
-                  .replace(/<style[\s\S]*?<\/style>/gi, ' ')   // 移除 style 内容
+                  .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+                  .replace(/<style[\s\S]*?<\/style>/gi, ' ')
                   .replace(/```[\s\S]*?```/g, ' ')
                   .replace(/`[^`]+`/g, ' ')
                   .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
@@ -903,7 +876,6 @@
         return buildingPromise;
       }
 
-      /* ---------- 执行搜索 ---------- */
       function performSearch(query) {
         if (!searchIndex) return [];
         const q = query.toLowerCase();
@@ -935,7 +907,6 @@
           });
         }
 
-        /* 标题命中的排前面，标题短的排前面 */
         out.sort(function (a, b) {
           if (a.titleMatch !== b.titleMatch) return a.titleMatch ? -1 : 1;
           return a.title.length - b.title.length;
@@ -944,7 +915,6 @@
         return out;
       }
 
-      /* ---------- 渲染结果（替换侧边栏） ---------- */
       function renderResults(rawQuery) {
         if (!resultsPanel || !searchBar) return;
 
@@ -960,7 +930,7 @@
         /* 索引未就绪：先显示加载中 */
         if (!searchIndex) {
           resultsPanel.innerHTML =
-            '<div class="search-status">少女搜索中…</div>';
+            '<div class="search-status">灵梦正在帮你寻找中…</div>';
           resultsPanel.style.display = 'flex';
           setSearchActive(true);
 
@@ -972,7 +942,7 @@
             })
             .catch(function () {
               resultsPanel.innerHTML =
-                '<div class="search-status search-empty">搜索失败，请稍后再试</div>';
+                '<div class="search-status search-empty">大脑被⑨冻住搜索失败了</div>';
             });
           return;
         }
@@ -1003,7 +973,6 @@
         setSearchActive(true);
       }
 
-      /* ---------- 状态切换 ---------- */
       function setSearchActive(active) {
         searchActive = !!active;
         window.__searchActive = searchActive;
@@ -1026,7 +995,6 @@
         setSearchActive(false);
       }
 
-      /* ---------- 点击外部 / 小叉号关闭 ---------- */
       document.addEventListener('mousedown', function (e) {
         if (!searchActive) return;
         if (searchBar && searchBar.contains(e.target)) return;
@@ -1044,7 +1012,6 @@
         closeSearch();
       }, { passive: true });
 
-      /* ---------- 初始化 ---------- */
       function tryInit() {
         if (document.querySelector('.sidebar')) {
           buildUI();
@@ -1061,7 +1028,6 @@
 
       window.addEventListener('resize', positionSearchBar);
 
-      /* 侧边栏折叠/展开时重新定位搜索栏 */
       setInterval(function () {
         if (!uiReady) return;
         const sidebar = document.querySelector('.sidebar');
