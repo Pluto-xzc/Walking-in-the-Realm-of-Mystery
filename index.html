@@ -469,6 +469,13 @@
       plugins: [
         function(hook) {
           hook.doneEach(function() {
+            var appNameLink = document.querySelector('.app-name-link');
+            if (appNameLink) {
+              appNameLink.onclick = function(e) {
+              e.preventDefault();
+              return false;
+              };
+            }
             setTimeout(initGalleries, 80);
             setTimeout(() => {
               window.dispatchEvent(new Event('resize'));
