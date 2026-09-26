@@ -84,6 +84,7 @@
     - [子月](gamedata/character/zy1.md)
     - [弑君者](gamedata/character/sjz.md)
   - **异乡来客**
+    - [结城理](gamedata/character/jcl.md)
     - [闪击](gamedata/character/sj.md)
     - [双月](gamedata/character/sy.md)
     - [艾拉](gamedata/character/al.md)
