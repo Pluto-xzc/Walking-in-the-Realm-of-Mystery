@@ -710,6 +710,7 @@
       let uiReady = false;
       let debounceTimer = null;
       let lastSidebarKey = '';
+      const failedRoutes = [];
 
       window.__searchActive = false;
 
@@ -808,8 +809,7 @@
         if (typeof text !== 'string') return false;
         const head = text.slice(0, 3000);
         if (/<\!DOCTYPE\s+html/i.test(head)) return true;
-        if (/<html\b/i.test(head) && /<\/html>/i.test(text)) return true;
-        if (/window\.\$docsify\s*=/i.test(head)) return true;
+        if (/<html\b/i.test(head) && /window\.\$docsify\s*=/i.test(text)) return true;
         return false;
       }
 
@@ -866,23 +866,37 @@
         });
       }
 
+      /* ========= 关键修复：根据侧边栏 href 推导 .md 路径 ========= */
       function tryFetchPage(p, basePath) {
-        const cleanRoute = p.route.replace(/^\/+/, '');
-        const urls = [
-          basePath + cleanRoute,
-          '/' + cleanRoute,
-          basePath + cleanRoute + (cleanRoute.indexOf('?') < 0 ? '?raw=true' : '&raw=true')
-        ];
+        // 1. 去掉开头的斜杠
+        let cleanRoute = p.route.replace(/^\/+/, '');
 
-        return (function next(idx) {
-          if (idx >= urls.length) return Promise.resolve(null);
-          return fetchOne(urls[idx]).then(function (text) {
+        // 2. 如果缺少 .md 后缀，自动补上（Docsify 渲染后 href 会去掉扩展名）
+        if (!/\.(md|markdown|html?)$/i.test(cleanRoute)) {
+          cleanRoute = cleanRoute + '.md';
+        }
+
+        // 3. 生成多个候选 URL，去重
+        const candidates = [
+          basePath + cleanRoute,                       // 例如 http://host/sub/gamedata/character/d.md
+          location.origin + '/' + cleanRoute,          // 例如 http://host/gamedata/character/d.md
+          new URL(cleanRoute, location.href).href      // 相对当前页面解析
+        ];
+        const seen = {};
+        const urls = [];
+        candidates.forEach(function (u) {
+          if (u && !seen[u]) { seen[u] = true; urls.push(u); }
+        });
+
+        return (function next(i) {
+          if (i >= urls.length) return Promise.resolve(null);
+          return fetchOne(urls[i]).then(function (text) {
             if (isHtmlShell(text)) {
-              return next(idx + 1);
+              return next(i + 1);
             }
-            return { url: urls[idx], text: text };
+            return { url: urls[i], text: text };
           }).catch(function () {
-            return next(idx + 1);
+            return next(i + 1);
           });
         })(0);
       }
@@ -916,13 +930,9 @@
             });
           }
 
-          // 基准路径：index.html 所在目录
           const basePath = location.origin + location.pathname.replace(/[^\/]*$/, '');
-
           const arr = new Array(pages.length);
           let cursor = 0;
-          let fetched = 0;
-          let failed = 0;
 
           function worker() {
             if (cursor >= pages.length) return Promise.resolve();
@@ -931,16 +941,14 @@
 
             return tryFetchPage(p, basePath).then(function (result) {
               if (!result) {
-                failed++;
+                failedRoutes.push(p.route);
                 arr[i] = { route: p.route, title: p.title, plain: '' };
-                console.warn('[搜索索引] 获取失败：', p.route);
                 return;
               }
-              fetched++;
               const plain = cleanMarkdown(result.text);
               arr[i] = { route: p.route, title: p.title, plain: plain };
             }).catch(function () {
-              failed++;
+              failedRoutes.push(p.route);
               arr[i] = { route: p.route, title: p.title, plain: '' };
             }).then(function () {
               return worker();
@@ -955,8 +963,11 @@
             const withPlain = searchIndex.filter(function (x) { return x.plain && x.plain.length > 0; }).length;
             console.log(
               '[搜索索引] 共 ' + searchIndex.length + ' 条，' +
-              withPlain + ' 条含内容，' + failed + ' 条获取失败'
+              withPlain + ' 条含内容，' + failedRoutes.length + ' 条获取失败'
             );
+            if (failedRoutes.length > 0) {
+              console.log('[搜索索引] 失败样例（前 10 条）：', failedRoutes.slice(0, 10));
+            }
             const sample = searchIndex.filter(function (x) { return x.plain && x.plain.length > 0; })[0];
             if (sample) {
               console.log('[搜索索引] 样例 "' + sample.title + '"：', sample.plain.slice(0, 120) + '…');
@@ -1074,7 +1085,9 @@
             '<div class="search-status search-empty">你要搜索的东西被⑨拿走了</div>';
         } else {
           const html = items.map(function (r) {
-            const href = '#/' + r.route.replace(/\.md$/i, '');
+            // 显示时把 .md 去掉，保持一致
+            const displayRoute = r.route.replace(/\.md$/i, '');
+            const href = '#/' + displayRoute;
             return (
               '<a class="search-result" href="' + escapeHtml(href) + '">' +
                 '<div class="search-result-title">' + escapeHtml(r.title) + '</div>' +
