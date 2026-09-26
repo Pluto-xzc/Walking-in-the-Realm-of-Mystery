@@ -836,19 +836,26 @@
           const arr = new Array(pages.length);
           let cursor = 0;
 
+          const basePath = location.origin + location.pathname.replace(/[^\/]*$/, '');
+
           function worker() {
             if (cursor >= pages.length) return Promise.resolve();
             const i = cursor++;
             const p = pages[i];
 
-            return fetch(p.route)
+            const url = basePath + p.route.replace(/^\/+/, '');
+
+            return fetch(url, {
+              headers: { 'Accept': 'text/markdown, text/plain, */*' }
+            })
               .then(function (res) {
-                if (!res.ok) throw new Error('bad');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
                 return res.text();
               })
               .then(function (text) {
-                if (text.includes('<!DOCTYPE html>') || text.includes('window.$docsify')) {
-                  throw new Error('skip html');
+                if (/<\!DOCTYPE\s+html/i.test(text) ||
+                    /<html[\s>]/i.test(text) && /window\.\$docsify/i.test(text)) {
+                  throw new Error('got html shell');
                 }
                 const plain = text
                   .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -863,7 +870,8 @@
                   .trim();
                 arr[i] = { route: p.route, title: p.title, plain: plain };
               })
-              .catch(function () {
+              .catch(function (err) {
+                console.warn('[搜索索引] 无法获取', url, err && err.message);
                 arr[i] = { route: p.route, title: p.title, plain: '' };
               })
               .then(function () {
@@ -876,6 +884,8 @@
 
           return Promise.all(jobs).then(function () {
             searchIndex = arr.filter(Boolean);
+            const withPlain = searchIndex.filter(function (x) { return x.plain; }).length;
+            console.log('[搜索索引] 构建完成，共 ' + searchIndex.length + ' 条，' + withPlain + ' 条含内容');
             return searchIndex;
           });
         })();
@@ -934,7 +944,6 @@
           return;
         }
 
-        /* 索引未就绪：先显示加载中 */
         if (!searchIndex) {
           resultsPanel.innerHTML =
             '<div class="search-status">灵梦正在帮你寻找中…</div>';
@@ -958,7 +967,7 @@
 
         if (items.length === 0) {
           resultsPanel.innerHTML =
-            '<div class="search-status search-empty">你要搜索的东西被⑨拿走了</div>';
+            '<div class="search-status search-empty">你要搜索的东西被⑨偷走了</div>';
         } else {
           const html = items.map(function (r) {
             const href = '#/' + r.route.replace(/\.md$/i, '');
