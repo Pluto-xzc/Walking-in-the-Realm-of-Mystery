@@ -277,6 +277,7 @@
   - **异想体**
     - [绅士精灵](gamedata/character/ssjl.md)
   - **罪人**
+    - [罗佳·蜘蛛巢拇指父辈](gamedata/character/lj·zzcmzfb.md)
     - [奥提斯·蜘蛛巢中指父辈](gamedata/character/ats·zzczzfb.md)
     - [良秀](gamedata/character/lx.md)
     - [辛克莱·黑兽-酉](gamedata/character/xkl·hs-y.md)
