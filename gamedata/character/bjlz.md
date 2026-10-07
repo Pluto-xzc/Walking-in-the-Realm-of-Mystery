@@ -1,6 +1,6 @@
 <div class="char-layout">
   <div class="char-left">
-    <div class="char-name">白金燐子</div>
+    <div class="char-name">白金磷子</div>
     <div class="char-stats">4 / 4　0 护甲　Band-key</div>
     <div class="char-note">
       <strong>注释：</strong><br>
@@ -14,6 +14,6 @@
     </div>
   </div>
       <div class="char-img">
-      <img src="/images/character/白金燐子.png" alt="白金燐子" style="width: 100%; max-width: 420px; height: auto;">
+      <img src="/images/character/白金磷子.png" alt="白金磷子" style="width: 100%; max-width: 420px; height: auto;">
     </div>
   </div>
