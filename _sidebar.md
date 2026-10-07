@@ -163,6 +163,8 @@
     - [凑友希那](gamedata/character/cyxn.md)
     - [冰川纱夜](gamedata/character/bcsy.md)
     - [宇川田亚子](gamedata/character/yctyz.md)
+  - **MyGo!!!!!**
+    - [高松灯](gamedata/character/gsd.md) 
   - **Ave Mujica**
     - [三角初华](gamedata/character/sjch.md)
     - [丰川祥子](gamedata/character/fcxz.md)
@@ -171,6 +173,7 @@
     - [八幡海铃](gamedata/character/bfhl.md)
   - **Fairy Bouquet**
     - [薇欧拉](gamedata/character/wol.md)
+
 - **初行塔卫**
   - **自然**
     - [萤石](gamedata/character/ys.md)
