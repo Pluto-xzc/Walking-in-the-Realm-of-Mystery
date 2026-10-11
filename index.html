@@ -465,26 +465,65 @@
         '/.*/_sidebar.md': '/_sidebar.md'
       },
       plugins: [
-        function(hook) {
-          hook.doneEach(function() {
-            var appNameLink = document.querySelector('.app-name-link');
-            if (appNameLink) {
-              appNameLink.onclick = function(e) {
-                e.preventDefault();
-                return false;
-              };
-            }
-            setTimeout(initGalleries, 80);
-            setTimeout(function() {
-              window.dispatchEvent(new Event('resize'));
-            }, 150);
-            if (window.__searchActive) {
-              var nav = document.querySelector('.sidebar-nav');
-              if (nav) nav.style.display = 'none';
-            }
-            if (typeof window.__positionSearchBar === 'function') {
-              window.__positionSearchBar();
-            }
+  function(hook) {
+    var expandedHrefs = [];
+
+    function collectExpanded() {
+      expandedHrefs = [];
+      var nav = document.querySelector('.sidebar-nav');
+      if (!nav) return;
+      var lis = nav.querySelectorAll('li');
+      for (var i = 0; i < lis.length; i++) {
+        var li = lis[i];
+        if (!li.querySelector('ul')) continue;
+        if (li.classList.contains('collapse')) continue;
+        var a = li.querySelector(':scope > a');
+        if (a && a.getAttribute('href')) {
+          expandedHrefs.push(a.getAttribute('href'));
+        }
+      }
+    }
+
+    function restoreExpanded() {
+      if (expandedHrefs.length === 0) return;
+      var nav = document.querySelector('.sidebar-nav');
+      if (!nav) return;
+      var lis = nav.querySelectorAll('li');
+      for (var i = 0; i < lis.length; i++) {
+        var li = lis[i];
+        if (!li.querySelector('ul')) continue;
+        var a = li.querySelector(':scope > a');
+        if (!a) continue;
+        var href = a.getAttribute('href');
+        if (expandedHrefs.indexOf(href) >= 0 && li.classList.contains('collapse')) {
+          li.classList.remove('collapse');
+        }
+      }
+    }
+    hook.beforeEach(function(content) {
+      collectExpanded();
+      return content;
+    });
+        hook.doneEach(function() {
+          var appNameLink = document.querySelector('.app-name-link');
+          if (appNameLink) {
+            appNameLink.onclick = function(e) {
+              e.preventDefault();
+              return false;
+            };
+          }
+          setTimeout(initGalleries, 80);
+          setTimeout(function() {
+            window.dispatchEvent(new Event('resize'));
+          }, 150);
+          if (window.__searchActive) {
+            var nav = document.querySelector('.sidebar-nav');
+            if (nav) nav.style.display = 'none';
+          }
+          if (typeof window.__positionSearchBar === 'function') {
+            window.__positionSearchBar();
+          }
+          setTimeout(restoreExpanded, 80);
           });
         }
       ]
