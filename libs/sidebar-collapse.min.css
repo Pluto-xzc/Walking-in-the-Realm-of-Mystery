@@ -1,0 +1,194 @@
+/* Sidebar collapse styles
+============================================================================= */
+.sidebar {
+    /* Remove theme-provided pagelink chevrons drawn via background images */
+    --sidebar-nav-pagelink-background: none !important;
+    --sidebar-nav-pagelink-background--active: none !important;
+    --sidebar-nav-pagelink-background--collapse: none !important;
+    --sidebar-nav-pagelink-background--loaded: none !important;
+}
+
+/* Allow horizontal scroll if content exceeds width */
+.sidebar-nav {
+    width: fit-content;
+}
+.sidebar{
+    overflow-x: scroll;
+}
+
+    /* Generic styling: any element immediately after the toggle (non-link, non-sublist) */
+.sidebar .sidebar-nav li.has-children > .sc-toggle + :not(a):not(ul):not(.app-sub-sidebar) {
+    display: block;
+    padding: var(--sidebar-nav-link-padding, .25em 0);
+    padding-left: 36px !important;
+    color: var(--sidebar-nav-link-color, var(--theme-color, currentColor));
+    line-height: var(--sidebar-nav-link-line-height, 1.5);
+    font-size: var(--sidebar-nav-link-font-size, inherit);
+    font-weight: var(--sidebar-nav-link-font-weight, inherit);
+    margin: var(--sidebar-nav-link-margin, 0);
+    background: var(--sidebar-nav-link-background, transparent);
+    border-radius: var(--sidebar-nav-link-border-radius, 2px);
+    transition: var(--sidebar-nav-link-transition, color .15s ease, background .15s ease);
+    text-transform: inherit;
+    border: inherit;
+}
+
+.sidebar .sidebar-nav li.has-children > .sc-toggle + :not(a):not(ul):not(.app-sub-sidebar):hover {
+    color: var(--sidebar-nav-link-color--hover, var(--theme-color));
+}
+
+.sidebar .sidebar-nav li.active.has-children > .sc-toggle + :not(a):not(ul):not(.app-sub-sidebar) {
+    color: var(--sidebar-nav-link-color--active, var(--theme-color));
+    font-weight: var(--sidebar-nav-link-font-weight--active, bold);
+}
+.sidebar .sidebar-nav li {
+    position: relative;
+}
+
+.sidebar .sidebar-nav li > * {
+    text-wrap: auto;
+    text-wrap-style: pretty;
+    line-height: 1.4rem;
+}
+
+/* Reserve a left gutter for ALL items so titles align whether
+   or not the item is collapsible */
+.sidebar .sidebar-nav li > a {
+    padding-left: 36px !important; /* make room for the toggle */
+}
+
+/* Non-link parent labels should align just like links */
+.sidebar .sidebar-nav li > .sc-label {
+    display: block;
+    /* Use the same padding as links, but ensure left space for the toggle */
+    padding: var(--sidebar-nav-link-padding, .25em 0);
+    padding-left: 36px !important; /* make room for the toggle */
+    /* Match Docsify Themeable link styles */
+    color: var(--sidebar-nav-link-color, var(--theme-color, currentColor));
+    line-height: var(--sidebar-nav-link-line-height, 1.5);
+    font-size: var(--sidebar-nav-link-font-size, inherit);
+    font-weight: var(--sidebar-nav-link-font-weight, inherit);
+    margin: var(--sidebar-nav-link-margin, 0);
+    background: var(--sidebar-nav-link-background, transparent);
+    border-radius: var(--sidebar-nav-link-border-radius, 2px);
+    transition: var(--sidebar-nav-link-transition, color .15s ease, background .15s ease);
+    text-transform: inherit;
+    border: inherit;
+}
+
+/* Hover state for non-link labels to mirror links (no pointer cursor) */
+.sidebar .sidebar-nav li > .sc-label:hover {
+    color: var(--sidebar-nav-link-color--hover, var(--theme-color));
+}
+
+/* Active state when parent li is active */
+.sidebar .sidebar-nav li.active > .sc-label {
+    color: var(--sidebar-nav-link-color--active, var(--theme-color));
+    font-weight: var(--sidebar-nav-link-font-weight--active, bold);
+    background: var(--sidebar-nav-link-background--active, transparent);
+}
+
+.sidebar .sidebar-nav .sc-toggle {
+    position: absolute;
+    top: 0.5em;
+    left: 6px;
+    width: 20px;
+    height: 16px;
+    border: none;
+    background: transparent;
+    display: flex;
+    justify-items: center;
+    align-items: baseline;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: var(--mono-shade1); /* sets SVG color via currentColor */
+}
+
+/* Inline SVG chevron icon */
+.sidebar .sidebar-nav .sc-toggle svg {
+    width: 20px;
+    height: 16px;
+    display: block;
+    fill: none;
+    stroke: currentColor; /* inherits from button color */
+    stroke-width: 2px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.sidebar .sidebar-nav li.has-children:not(.collapsed) > .sc-toggle svg {
+    transform: rotate(90deg);
+}
+
+/* Prepare sublists for animation */
+.sidebar .sidebar-nav li > ul,
+.sidebar .sidebar-nav li > .app-sub-sidebar {
+    overflow: hidden;
+    opacity: 1;
+    /* max-height will be controlled via JS for accurate height */
+    transition: max-height var(--duration-fast) ease, opacity var(--duration-fast) ease;
+}
+
+/* Disable transitions during initial enhancement to avoid unwanted animations */
+.sidebar.sidebar-no-anim .sidebar-nav li > ul,
+.sidebar.sidebar-no-anim .sidebar-nav li > .app-sub-sidebar {
+    transition: none !important;
+}
+.sidebar.sidebar-no-anim .sidebar-nav .sc-toggle svg {
+    transition: none !important;
+}
+
+.sidebar .sidebar-nav li.collapsed > ul,
+.sidebar .sidebar-nav li.collapsed > .app-sub-sidebar {
+    max-height: 0 !important;
+    opacity: 0;
+}
+
+/* subtle nesting indentation */
+.sidebar .sidebar-nav ul ul a,
+.sidebar .sidebar-nav .app-sub-sidebar a {
+    padding-left: 36px; /* additional indent for deeper levels */
+}
+
+/* Nested non-link labels should indent similarly */
+.sidebar .sidebar-nav ul ul .sc-label,
+.sidebar .sidebar-nav .app-sub-sidebar .sc-label {
+    padding-left: 36px;
+}
+
+/* Sidebar resizer handle */
+.sidebar {
+    position: relative;
+}
+.sidebar .sidebar-resizer {
+    position: absolute;
+    top: 0;
+    right: -3px; /* slight overlap to make it easier to grab */
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    background: transparent; /* invisible but hoverable */
+    z-index: 2;
+}
+.sidebar .sidebar-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    background: var(--mono-tint2, rgba(0,0,0,0.05));
+    opacity: 0;
+    transition: opacity .15s ease;
+}
+.sidebar .sidebar-resizer:hover::after,
+body.sidebar-resizing .sidebar .sidebar-resizer::after {
+    opacity: 1;
+}
+/* Prevent text selection while resizing */
+body.sidebar-resizing {
+    user-select: none;
+    cursor: col-resize;
+}
