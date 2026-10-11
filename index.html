@@ -18,11 +18,9 @@
       padding: 2px 6px;
     }
 
-    /* 切页后强制恢复用户展开的目录 */
-    .sidebar-nav li.force-expanded > ul {
-      max-height: 9999px !important;
-      opacity: 1 !important;
-      overflow: visible !important;
+    /* 恢复展开状态时临时禁用过渡动画 */
+    .sidebar-nav.restoring li > ul {
+      transition: none !important;
     }
 
     #music-tip {
@@ -479,15 +477,14 @@
           function getKey(li) {
             var clone = li.cloneNode(true);
             var btns = clone.querySelectorAll('button');
-            for (var i = 0; i < btns.length; i++) btns[i].parentNode.removeChild(btns[i]);
+            for (var i = 0; i < btns.length; i++) {
+              if (btns[i].parentNode) btns[i].parentNode.removeChild(btns[i]);
+            }
             var uls = clone.querySelectorAll('ul');
-            for (var i = 0; i < uls.length; i++) uls[i].parentNode.removeChild(uls[i]);
+            for (var i = 0; i < uls.length; i++) {
+              if (uls[i].parentNode) uls[i].parentNode.removeChild(uls[i]);
+            }
             return clone.textContent.replace(/\s+/g, ' ').trim();
-          }
-
-          function isExpanded(li) {
-            if (li.classList.contains('force-expanded')) return true;
-            return !li.classList.contains('collapsed');
           }
 
           function collectExpanded() {
@@ -497,7 +494,7 @@
             var lis = nav.querySelectorAll('li.has-children');
             for (var i = 0; i < lis.length; i++) {
               var li = lis[i];
-              if (isExpanded(li)) {
+              if (!li.classList.contains('collapsed')) {
                 var key = getKey(li);
                 if (key) expandedKeys.push(key);
               }
@@ -508,15 +505,23 @@
             if (expandedKeys.length === 0) return;
             var nav = document.querySelector('.sidebar-nav');
             if (!nav) return;
+
+            nav.classList.add('restoring');
+
             var lis = nav.querySelectorAll('li.has-children');
             for (var i = 0; i < lis.length; i++) {
               var li = lis[i];
-              if (li.classList.contains('force-expanded')) continue;
+              if (!li.classList.contains('collapsed')) continue;
               var key = getKey(li);
-              if (key && expandedKeys.indexOf(key) >= 0 && li.classList.contains('collapsed')) {
-                li.classList.add('force-expanded');
+              if (key && expandedKeys.indexOf(key) >= 0) {
+                var toggle = li.querySelector(':scope > button.sc-toggle');
+                if (toggle) toggle.click();
               }
             }
+
+            setTimeout(function() {
+              nav.classList.remove('restoring');
+            }, 60);
           }
 
           hook.beforeEach(function(content) {
@@ -543,15 +548,8 @@
             if (typeof window.__positionSearchBar === 'function') {
               window.__positionSearchBar();
             }
-            setTimeout(restoreExpanded, 100);
+            setTimeout(restoreExpanded, 120);
           });
-
-          document.addEventListener('click', function(e) {
-            var toggle = e.target.closest('.sc-toggle');
-            if (!toggle) return;
-            var li = toggle.closest('li.has-children');
-            if (li) li.classList.remove('force-expanded');
-          }, true);
         }
       ]
     };
@@ -1173,7 +1171,7 @@
 
       window.addEventListener('resize', positionSearchBar);
 
-      setInterval(function() {
+      setInterval(function () {
         if (!uiReady) return;
         const sidebar = document.querySelector('.sidebar');
         if (!sidebar) return;
