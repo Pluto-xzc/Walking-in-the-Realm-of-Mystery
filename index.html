@@ -18,7 +18,6 @@
       padding: 2px 6px;
     }
 
-    /* 恢复展开状态时临时禁用过渡动画 */
     .sidebar-nav.restoring li > ul {
       transition: none !important;
     }
@@ -549,6 +548,9 @@
               window.__positionSearchBar();
             }
             setTimeout(restoreExpanded, 120);
+            if (typeof window.__retryBuildIndex === 'function') {
+              window.__retryBuildIndex();
+            }
           });
         }
       ]
@@ -955,14 +957,25 @@
         })(0);
       }
 
-      function buildIndex() {
-        if (searchIndex) return Promise.resolve(searchIndex);
-        if (buildingPromise) return buildingPromise;
+      // 等侧边栏就绪
+      function waitForSidebar(maxWaitMs) {
+        return new Promise(function (resolve, reject) {
+          var start = Date.now();
+          (function check() {
+            var links = document.querySelectorAll('.sidebar-nav a[href]');
+            if (links.length > 0) {
+              resolve(links);
+            } else if (Date.now() - start > maxWaitMs) {
+              reject(new Error('sidebar not ready after ' + maxWaitMs + 'ms'));
+            } else {
+              setTimeout(check, 200);
+            }
+          })();
+        });
+      }
 
-        buildingPromise = (function () {
-          const links = Array.prototype.slice.call(
-            document.querySelectorAll('.sidebar-nav a[href]')
-          );
+      function buildIndexNow(links) {
+        return (function () {
           const pages = [];
           const seen = Object.create(null);
 
@@ -1011,13 +1024,39 @@
           for (let k = 0; k < CONCURRENCY; k++) jobs.push(worker());
 
           return Promise.all(jobs).then(function () {
-            searchIndex = arr.filter(Boolean);
-            return searchIndex;
+            return arr.filter(Boolean);
           });
         })();
+      }
+
+      function buildIndex() {
+        // 已有非空索引直接返回
+        if (searchIndex && searchIndex.length > 0) return Promise.resolve(searchIndex);
+        // 正在构建，复用
+        if (buildingPromise) return buildingPromise;
+
+        buildingPromise = waitForSidebar(10000).then(function (links) {
+          return buildIndexNow(links);
+        }).then(function (idx) {
+          if (idx && idx.length > 0) {
+            searchIndex = idx;
+          }
+          // 无论成功与否都释放 buildingPromise，允许下次重试
+          buildingPromise = null;
+          return searchIndex || [];
+        }).catch(function (err) {
+          buildingPromise = null;
+          throw err;
+        });
 
         return buildingPromise;
       }
+
+      // 供 doneEach 兜底调用
+      window.__retryBuildIndex = function () {
+        if (searchIndex && searchIndex.length > 0) return;
+        buildIndex().catch(function () {});
+      };
 
       function performSearch(query) {
         if (!searchIndex) return [];
@@ -1070,7 +1109,7 @@
           return;
         }
 
-        if (!searchIndex) {
+        if (!searchIndex || searchIndex.length === 0) {
           resultsPanel.innerHTML =
             '<div class="search-status">灵梦正在帮你寻找中…</div>';
           resultsPanel.style.display = 'flex';
