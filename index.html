@@ -19,10 +19,9 @@
     }
 
     /* 切页后强制恢复用户展开的目录 */
-    .sidebar-nav li.user-expanded > ul {
-      display: block !important;
-      max-height: none !important;
-      height: auto !important;
+    .sidebar-nav li.force-expanded > ul {
+      max-height: 9999px !important;
+      opacity: 1 !important;
       overflow: visible !important;
     }
 
@@ -478,25 +477,26 @@
           var expandedKeys = [];
 
           function getKey(li) {
-            var a = li.querySelector(':scope > a');
-            if (!a) return null;
-            return a.getAttribute('href') || a.textContent.trim();
+            var clone = li.cloneNode(true);
+            var btns = clone.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) btns[i].parentNode.removeChild(btns[i]);
+            var uls = clone.querySelectorAll('ul');
+            for (var i = 0; i < uls.length; i++) uls[i].parentNode.removeChild(uls[i]);
+            return clone.textContent.replace(/\s+/g, ' ').trim();
           }
 
           function isExpanded(li) {
-            var ul = li.querySelector(':scope > ul');
-            if (!ul) return false;
-            return ul.offsetHeight > 0;
+            if (li.classList.contains('force-expanded')) return true;
+            return !li.classList.contains('collapsed');
           }
 
           function collectExpanded() {
             expandedKeys = [];
             var nav = document.querySelector('.sidebar-nav');
             if (!nav) return;
-            var lis = nav.querySelectorAll('li');
+            var lis = nav.querySelectorAll('li.has-children');
             for (var i = 0; i < lis.length; i++) {
               var li = lis[i];
-              if (!li.querySelector(':scope > ul')) continue;
               if (isExpanded(li)) {
                 var key = getKey(li);
                 if (key) expandedKeys.push(key);
@@ -508,14 +508,13 @@
             if (expandedKeys.length === 0) return;
             var nav = document.querySelector('.sidebar-nav');
             if (!nav) return;
-            var lis = nav.querySelectorAll('li');
+            var lis = nav.querySelectorAll('li.has-children');
             for (var i = 0; i < lis.length; i++) {
               var li = lis[i];
-              if (!li.querySelector(':scope > ul')) continue;
-              if (isExpanded(li)) continue;
+              if (li.classList.contains('force-expanded')) continue;
               var key = getKey(li);
-              if (key && expandedKeys.indexOf(key) >= 0) {
-                li.classList.add('user-expanded');
+              if (key && expandedKeys.indexOf(key) >= 0 && li.classList.contains('collapsed')) {
+                li.classList.add('force-expanded');
               }
             }
           }
@@ -548,11 +547,10 @@
           });
 
           document.addEventListener('click', function(e) {
-            var sidebar = document.querySelector('.sidebar-nav');
-            if (!sidebar || !sidebar.contains(e.target)) return;
-            if (e.target.closest('a')) return;
-            var li = e.target.closest('li');
-            if (li) li.classList.remove('user-expanded');
+            var toggle = e.target.closest('.sc-toggle');
+            if (!toggle) return;
+            var li = toggle.closest('li.has-children');
+            if (li) li.classList.remove('force-expanded');
           }, true);
         }
       ]
@@ -1175,7 +1173,7 @@
 
       window.addEventListener('resize', positionSearchBar);
 
-      setInterval(function () {
+      setInterval(function() {
         if (!uiReady) return;
         const sidebar = document.querySelector('.sidebar');
         if (!sidebar) return;
