@@ -197,7 +197,8 @@ export class Player {
 
   async discard(cards) {
     await this.loseCards(cards);
-    for (const c of cards) this.game.discardPile.push(c);
+    // 走统一入口：回合内会同时留在中央区，回合结束再归档
+    this.game.toDiscard(cards);
     if (cards.length) this.game.log(`${this.name} 弃置了 ${cards.map((c) => c.text).join('、')}`);
   }
 
@@ -312,6 +313,19 @@ export class Game {
     this.players = [];
     this.deck = [];
     this.discardPile = [];
+    /**
+     * 中央区（本回合处理区）
+     * ------------------------------------------------------------------
+     * 语义（与弃牌堆的关系）：
+     *   - 本回合打出的牌先进中央区
+     *   - 中央区的牌【同时算作弃牌堆的一部分】（两处都能检索到）
+     *   - 当前角色回合彻底结束后，中央区的牌移入弃牌堆，中央区清空
+     *     （此后只能在弃牌堆找到）
+     *
+     * 对应无名杀的 processing（处理区），但额外保留「当回合」这一维度，
+     * 以便技能区分「刚打出的牌」与「历史上的牌」。
+     */
+    this.centerZone = [];
     this.logs = [];
     this.turnCount = 0;
     this.phaseNumber = 0;
@@ -321,6 +335,84 @@ export class Game {
     this.over = false;
     this.onUpdate = () => {};
     this.pendingChoice = null;
+  }
+
+  /* ============================================================
+   * 弃牌堆 / 中央区
+   * ============================================================ */
+
+  /**
+   * 把牌放入中央区（本回合处理区）
+   * 这些牌同时属于弃牌堆（见 getDiscardPile），回合结束后正式归档。
+   * 接受数组或单张牌。
+   */
+  toCenter(cards) {
+    for (const c of this._asCardList(cards)) {
+      if (!c) continue;
+      c.zone = 'center';
+      if (!this.centerZone.includes(c)) this.centerZone.push(c);
+      // 中央区的牌同时算作弃牌堆的一部分
+      if (!this.discardPile.includes(c)) this.discardPile.push(c);
+    }
+    this.emit();
+  }
+
+  /** 兼容旧名：把牌置入弃牌堆（回合内会同时保留在中央区） */
+  toDiscard(cards) {
+    for (const c of this._asCardList(cards)) {
+      if (!c) continue;
+      c.zone = 'discard';
+      if (!this.discardPile.includes(c)) this.discardPile.push(c);
+      // 若仍在当前回合内，同时保留在中央区直到回合结束
+      if (this._inCurrentTurn && !this.centerZone.includes(c)) {
+        this.centerZone.push(c);
+      }
+    }
+    this.emit();
+  }
+
+  /** 归一化：接受 Card、Card[]、null */
+  _asCardList(cards) {
+    if (!cards) return [];
+    if (Array.isArray(cards)) return cards;
+    // 可能是单个 Card 实例
+    if (typeof cards === 'object' && cards.name !== undefined) return [cards];
+    return [];
+  }
+
+  /**
+   * 检索弃牌堆
+   * 返回【弃牌堆全部牌】—— 含中央区（因为中央区也算弃牌堆）。
+   * 这是给「在弃牌堆里找牌」的技能用的。
+   */
+  getDiscardPile() {
+    return this.discardPile.slice();
+  }
+
+  /**
+   * 检索中央区（本回合打出的牌）
+   * 回合结束后清空，因此只反映「当前回合」。
+   */
+  getCenterZone() {
+    return this.centerZone.slice();
+  }
+
+  /** 取弃牌堆顶（最后进入的） */
+  peekDiscardPile() {
+    return this.discardPile.length
+      ? this.discardPile[this.discardPile.length - 1] : null;
+  }
+
+  /**
+   * 回合收尾：把中央区归档进弃牌堆
+   * 由 runTurn 在回合流程全部结束后调用。
+   */
+  flushCenterZone() {
+    for (const c of this.centerZone) {
+      c.zone = 'discard';
+    }
+    this.centerZone = [];
+    this.emit();
   }
 
   emit() { this.onUpdate(); }
@@ -728,7 +820,7 @@ export class Game {
         if (!card.length) continue;
 
         await p.loseCards(card);
-        this.discardPile.push(...card);
+        this.toDiscard(...card);
         const heal = (p.isZhu && p.hasSkill('jiuyuan') && p.group === 'wu' && p !== player) ? 2 : 1;
         player.hp += heal;
         this.log(`${p.name} 使用【桃】救助 ${player.name}${viaSkill ? '（急救）' : ''}${heal > 1 ? '（救援 +1）' : ''}`);
@@ -749,7 +841,7 @@ export class Game {
     // 弃置所有牌
     const all = player.getCards('hej');
     for (const c of all) c.zone = 'discard';
-    this.discardPile.push(...all);
+    this.toDiscard(...all);
     player.hand = [];
     player.equips = { equip1: null, equip2: null, equip3: null, equip4: null };
     player.judges = [];
@@ -764,7 +856,7 @@ export class Game {
         const others = source.getCards('hej');
         if (others.length) {
           for (const c of others) c.zone = 'discard';
-          this.discardPile.push(...others);
+          this.toDiscard(...others);
           source.hand = [];
           source.equips = { equip1: null, equip2: null, equip3: null, equip4: null };
           source.judges = [];
@@ -822,7 +914,7 @@ export class Game {
 
     // 判定牌处理
     if (card.zone === 'processing') {
-      this.discardPile.push(card);
+      this.toDiscard(card);
       card.zone = 'discard';
     }
     this.emit();
@@ -880,11 +972,16 @@ export class Game {
     this.log('每名角色获得 4 张起始手牌');
     this.emit();
 
+    // ---- 行动顺序 ----
+    // 主公（1 号位）先手，然后按座位号依次行动。
+    // 若主公不存在（异常情况），则从 0 号位开始。
+    const lord = this.players.find((p) => p.identity === 'zhu') || this.players[0];
+    const startIdx = this.players.indexOf(lord);
     let guard = 0;
-    let idx = 0;
+    let step = 0;
     while (!this.over && guard++ < 500) {
-      const p = this.players[idx % this.players.length];
-      idx++;
+      const p = this.players[(startIdx + step) % this.players.length];
+      step++;
       if (!p.alive) continue;
       await this.runTurn(p);
       if (this.over) break;
@@ -896,6 +993,7 @@ export class Game {
   async runTurn(player) {
     this.turnCount++;
     this.currentPlayer = player;
+    this._inCurrentTurn = true;      // 期间弃置的牌保留在中央区
     player.clearFlags();
     player.storage.rendeCount = 0;
     this.log(`—— ${player.name} 的回合（第 ${this.turnCount} 回合）——`);
@@ -921,6 +1019,12 @@ export class Game {
     if (!player.alive || this.over) return;
 
     await this.checkSkills('turnEnd', { player });
+
+    // ---- 回合彻底结束：中央区归档进弃牌堆 ----
+    // 此后这些牌只能从弃牌堆检索到，中央区不再包含它们。
+    this._inCurrentTurn = false;
+    this.flushCenterZone();
+
     this.emit();
   }
 
@@ -938,12 +1042,12 @@ export class Game {
           player.addFlag('skipUse', true);
           this.log(`${player.name} 被【乐不思蜀】影响，跳过出牌阶段`);
         }
-        this.discardPile.push(card); card.zone = 'discard';
+        this.toDiscard(card); card.zone = 'discard';
       } else if (card.name === 'shandian') {
         const j = await player.judge('shandian');
         const spade29 = j.suit === 'spade' && j.number >= 2 && j.number <= 9;
         if (spade29) {
-          this.discardPile.push(card); card.zone = 'discard';
+          this.toDiscard(card); card.zone = 'discard';
           await player.damage(3, null, 'shandian', null);
           if (!player.alive) return;
         } else {
@@ -956,7 +1060,7 @@ export class Game {
             next.judges.push(card);
             this.log(`【闪电】移动到 ${next.name} 的判定区`);
           } else {
-            this.discardPile.push(card); card.zone = 'discard';
+            this.toDiscard(card); card.zone = 'discard';
           }
         }
       }
@@ -1032,13 +1136,14 @@ export class Game {
 
     this.log(`${player.name} 使用【${card.fullname}】${card.sourceCards && card.sourceCards.length ? `（${card.sourceCards.map((c) => c.text).join('、')}）` : ''}`);
 
-    // 移除实体牌
+    // 移除实体牌，并置入中央区（本回合处理区）
+    // 中央区的牌同时算作弃牌堆的一部分，回合结束后归档。
     if (card.sourceCards && card.sourceCards.length) {
       await player.loseCards(card.sourceCards);
-      for (const c of card.sourceCards) { c.zone = 'processing'; }
+      this.toCenter(card.sourceCards);
     } else if (player.getCards('he').includes(card)) {
       await player.loseCards([card]);
-      card.zone = 'processing';
+      this.toCenter([card]);
     }
 
     // 记录出杀次数
@@ -1083,21 +1188,13 @@ export class Game {
     this.emit();
   }
 
-  toDiscard(cards) {
-    for (const c of cards) {
-      if (!c) continue;
-      c.zone = 'discard';
-      if (!this.discardPile.includes(c)) this.discardPile.push(c);
-    }
-  }
-
   async equipCard(player, card) {
     const sub = CARDS[card.name].subtype;
     const old = player.equips[sub];
     if (old) {
       await player.loseCards([old]);
       player.equips[sub] = null;
-      this.discardPile.push(old);
+      this.toDiscard(old);
       old.zone = 'discard';
     }
     player.equips[sub] = card;
@@ -1132,7 +1229,7 @@ export class Game {
           : [wuxies[0]];
         if (!picked.length) continue;
         await p.loseCards(picked);
-        this.discardPile.push(...picked);
+        this.toDiscard(...picked);
         nullified = !nullified;
         this.log(`${p.name} 使用【无懈可击】${nullified ? '抵消' : '反抵消'}【${card.fullname}】`);
         this.emit();
@@ -1240,14 +1337,14 @@ export class Game {
       });
       if (!picked || !picked.length) return false;
       await target.loseCards(picked);
-      this.discardPile.push(...picked);
+      this.toDiscard(...picked);
       this.log(`${target.name} 打出【闪】${asQingguo ? '（倾国）' : ''}`);
       return true;
     }
     if (this.ai.shouldRespondShan(target, source, card)) {
       const c = candidates[0];
       await target.loseCards([c]);
-      this.discardPile.push(c);
+      this.toDiscard(c);
       this.log(`${target.name} 打出【闪】${asQingguo ? '（倾国）' : ''}`);
       return true;
     }
@@ -1332,14 +1429,14 @@ export class Game {
       });
       if (!picked || !picked.length) return false;
       await player.loseCards(picked);
-      this.discardPile.push(...picked);
+      this.toDiscard(...picked);
       this.log(`${player.name} 打出【杀】${viaSkill ? `（${SKILLS[viaSkill].name}）` : ''}`);
       return true;
     }
     if (this.ai.shouldRespondSha(player, opponent)) {
       const c = cards[0];
       await player.loseCards([c]);
-      this.discardPile.push(c);
+      this.toDiscard(c);
       this.log(`${player.name} 打出【杀】${viaSkill ? `（${SKILLS[viaSkill].name}）` : ''}`);
       return true;
     }
@@ -1354,7 +1451,7 @@ export class Game {
     const picked = await player.chooseCardFromPlayer(target, 'hej', `过河拆桥：弃置 ${target.name} 的一张牌`);
     if (picked && picked.length) {
       await target.loseCards(picked);
-      this.discardPile.push(...picked);
+      this.toDiscard(...picked);
       this.log(`${player.name} 弃置了 ${target.name} 的 ${picked[0].text}`);
     }
   }
@@ -1406,7 +1503,7 @@ export class Game {
       taken.add(pick);
       await p.gain([pick], 'gain2');
     }
-    for (const c of pool) if (!taken.has(c)) { c.zone = 'discard'; this.discardPile.push(c); }
+    for (const c of pool) if (!taken.has(c)) { c.zone = 'discard'; this.toDiscard(c); }
     this.emit();
   }
 
@@ -1461,7 +1558,7 @@ export class Game {
         const shas = holder.getCards('he', (c) => c.name === 'sha');
         if (shas.length) {
           await holder.loseCards([shas[0]]);
-          this.discardPile.push(shas[0]);
+          this.toDiscard(shas[0]);
           const vc = new Card(shas[0].suit, shas[0].number, 'sha');
           this.log(`${holder.name} 对 ${victim.name} 使用【杀】`);
           await this.resolveSha(holder, vc, [victim]);
@@ -1481,7 +1578,7 @@ export class Game {
     const old = player.equips[sub];
     if (old && old !== card) {
       player.equips[sub] = null;
-      this.discardPile.push(old); old.zone = 'discard';
+      this.toDiscard(old); old.zone = 'discard';
     }
     // 从原持有者装备区移除
     for (const p of this.players) {

@@ -196,6 +196,96 @@ html, body {
 }
 .sgs-icon-btn:hover { background: rgba(245, 239, 228, 0.16); color: #fff; }
 
+/* ==========================================================================
+   中央区 / 弃牌堆
+   ========================================================================== */
+.sgs-center-label {
+  font-size: 11px;
+  color: #8a7d6b;
+  letter-spacing: 2px;
+  text-align: center;
+  margin-bottom: 4px;
+  user-select: none;
+}
+
+.sgs-center-empty {
+  font-size: 11px;
+  color: rgba(138, 125, 107, 0.6);
+  align-self: center;
+  padding: 4px 8px;
+}
+
+.sgs-center-more {
+  align-self: center;
+  font-size: 11px;
+  color: var(--gold-light);
+  padding: 2px 6px;
+}
+
+/* 弃牌堆面板 */
+.sgs-pile-panel {
+  position: absolute;
+  top: 46px; right: 12px; bottom: 12px;
+  width: min(520px, 56vw);
+  background: rgba(20, 16, 13, 0.97);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+  z-index: 40;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+}
+.sgs-pile-panel.hidden { display: none; }
+
+.sgs-pile-head {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 8px; margin-bottom: 10px;
+  border-bottom: 1px solid rgba(212, 160, 23, 0.25);
+  position: sticky; top: -10px;
+  background: rgba(20, 16, 13, 0.98);
+}
+.sgs-pile-title {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 17px; color: var(--gold-light); font-weight: 700;
+}
+.sgs-pile-stat { font-size: 12px; color: #9a8b78; flex: 1; }
+
+.sgs-pile-empty {
+  font-size: 13px; color: #8a7d6b;
+  text-align: center; padding: 24px 0;
+}
+
+.sgs-pile-section { margin-bottom: 14px; }
+.sgs-pile-section-title {
+  font-size: 12px; color: #cbbfa8;
+  margin-bottom: 6px; letter-spacing: 1px;
+}
+.sgs-pile-grid {
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.sgs-pile-grid .sgs-card {
+  width: 62px; height: 88px;
+  cursor: default;
+}
+.sgs-pile-grid .sgs-card .card-name { font-size: 17px; }
+.sgs-pile-grid .sgs-card .card-corner { font-size: 10px; padding: 0 3px 1px; }
+.sgs-pile-grid .sgs-card .card-corner .num { font-size: 11px; }
+
+/* 中央区里的牌（在弃牌堆面板中高亮） */
+.sgs-pile-grid .sgs-card.in-center {
+  box-shadow: 0 0 0 2px var(--gold-light), 0 0 10px rgba(212, 160, 23, 0.45);
+}
+
+/* 牌池选择提示（五谷丰登等） */
+.sgs-pool-label {
+  font-size: 12px;
+  color: var(--gold-light);
+  align-self: center;
+  padding: 0 10px;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
+
 /* 「返回主站」按钮 */
 .sgs-home-btn {
   text-decoration: none;
@@ -420,12 +510,35 @@ html, body {
 }
 
 .sgs-card .card-corner {
-  display: flex; align-items: baseline; gap: 1px;
-  font-size: 12px; font-weight: 700; line-height: 1;
+  display: inline-flex; align-items: center; gap: 2px;
+  align-self: flex-start;
+  padding: 1px 4px 2px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 13px; font-weight: 700; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
 }
-.sgs-card .card-corner .num { font-size: 13px; }
+.sgs-card .card-corner .num { font-size: 14px; font-weight: 800; }
 .sgs-card.red .card-corner { color: #c0392b; }
-.sgs-card.black .card-corner { color: #2b241d; }
+.sgs-card.black .card-corner { color: #1f1a15; }
+
+/* 卡牌被选中 / 可出牌时的状态 */
+.sgs-card.playable { cursor: pointer; }
+.sgs-card.playable:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.55), 0 0 0 2px var(--gold-light);
+  z-index: 5;
+}
+.sgs-card.equipped {
+  cursor: default;
+  opacity: 0.92;
+  border-color: #8a7d6b;
+  box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.35), 0 2px 6px rgba(0,0,0,0.4);
+}
+.sgs-card.in-center {
+  box-shadow: 0 0 0 2px var(--gold-light), 0 0 14px rgba(212, 160, 23, 0.5);
+}
 
 .sgs-card .card-name {
   flex: 1;

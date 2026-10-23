@@ -27,33 +27,55 @@ async function boot() {
 
   // 组装座位
   const count = 5;
-  const identities = IDENTITY_5.slice(0, count);
 
-  // 随机打乱身份，但玩家位置固定 0，主公在随机座位
-  const shuffled = identities.slice();
-  // 保证恰有一个主公
-  for (let i = shuffled.length - 1; i > 0; i--) {
+  // ---- 身份分配 ----
+  // 规则：主公固定在 1 号位（seat 0），其余身份随机分配到 2~5 号位。
+  // 这样行动顺序就是「主公先手 → 2 号 → 3 号 → …」，符合身份模式惯例。
+  const others = IDENTITY_5.filter((x) => x !== 'zhu');   // ['zhong','fan','fan','nei']
+  for (let i = others.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    [others[i], others[j]] = [others[j], others[i]];
   }
+  const idents = ['zhu', ...others];
 
-  const used = new Set([humanChar]);
+  // ---- 武将分配 ----
+  // 主公从常备主公中选；其余随机（且不与已选重复）
+  const lordIds = LORD_CHARS.slice();
+  for (let i = lordIds.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [lordIds[i], lordIds[j]] = [lordIds[j], lordIds[i]];
+  }
+  const lordChar = lordIds.find((c) => c !== humanChar)
+    || ALL_CHARS.find((c) => c !== humanChar);
+
+  const used = new Set([humanChar, lordChar]);
   const seatConfig = [];
   for (let i = 0; i < count; i++) {
     let charId;
-    if (shuffled[i] === 'zhu') {
-      const lords = LORD_CHARS.filter((c) => !used.has(c));
-      charId = lords.length
-        ? lords[Math.floor(Math.random() * lords.length)]
-        : ALL_CHARS.filter((c) => !used.has(c))[0];
-    } else if (i === 0) {
-      charId = humanChar;
+    if (i === 0) {
+      charId = lordChar;                       // 1 号位永远主公
+    } else if (i === 1) {
+      charId = humanChar;                      // 玩家固定在 2 号位
     } else {
       const p = ALL_CHARS.filter((c) => !used.has(c));
       charId = p[Math.floor(Math.random() * p.length)];
     }
     used.add(charId);
-    seatConfig.push({ charId, identity: shuffled[i], isHuman: i === 0 });
+    seatConfig.push({
+      charId,
+      identity: idents[i],
+      // 玩家在 2 号位；若玩家自己就是主公（选了常备主公），则玩家坐 1 号位
+      isHuman: i === 1,
+    });
+  }
+
+  // 若玩家选的武将本身就是常备主公，则让玩家坐 1 号位当主公
+  const humanIsLord = LORD_CHARS.includes(humanChar);
+  if (humanIsLord) {
+    seatConfig[0].charId = humanChar;
+    seatConfig[0].isHuman = true;
+    seatConfig[1].charId = lordChar;
+    seatConfig[1].isHuman = false;
   }
 
   // 创建游戏

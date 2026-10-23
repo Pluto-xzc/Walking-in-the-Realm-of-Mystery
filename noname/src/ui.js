@@ -205,13 +205,35 @@ export class UI {
         tasks.push({ type: 'char', id, url: charImgPath(id), fb: charFallbackPath(id) });
       });
 
-      const done = { ok: 0, fail: 0, total: tasks.length };
+      const done = { ok: 0, fail: 0, total: tasks.length, cached: 0 };
       let finished = false;
+
+      // ---- 缓存检测 ----
+      // 资源版本号：素材有更新时改这里，即可让所有客户端重新拉取。
+      const ASSET_VERSION = '1';
+      const CACHE_KEY = 'sgs_assets_v' + ASSET_VERSION;
+
+      const readCache = () => {
+        try {
+          const raw = localStorage.getItem(CACHE_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+      };
+      const writeCache = (obj) => {
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify(obj)); } catch (e) { /* 隐私模式忽略 */ }
+      };
+
+      const cached = readCache();
+      const isAllCached = cached && cached.total === tasks.length && cached.stamp === ASSET_VERSION;
 
       const updateProgress = () => {
         const p = done.total ? (done.ok + done.fail) / done.total : 1;
         bar.style.width = `${Math.round(p * 100)}%`;
-        loadText.textContent = `首次进入需要下载资源，请稍候… ${done.ok + done.fail}/${done.total}`;
+        if (isAllCached) {
+          loadText.textContent = `资源已缓存，无需重新下载（${done.total} 项）`;
+        } else {
+          loadText.textContent = `首次进入需要下载资源，请稍候… ${done.ok + done.fail}/${done.total}`;
+        }
         if (typeof onProgress === 'function') onProgress(p, loadText.textContent);
       };
 
@@ -219,14 +241,28 @@ export class UI {
         if (finished) return;
         finished = true;
         bar.style.width = '100%';
-        if (done.fail > 0) {
+        if (isAllCached) {
+          loadText.textContent = '资源已缓存，秒开';
+        } else if (done.fail > 0) {
           loadText.textContent = `资源加载完成（${done.fail} 项缺失，将使用占位图）`;
         } else {
-          loadText.textContent = '资源加载完成';
+          loadText.textContent = '资源加载完成（已缓存，下次秒开）';
         }
+        // 记录缓存
+        writeCache({ stamp: ASSET_VERSION, total: tasks.length, at: Date.now() });
         btn.disabled = false;
         btn.focus();
       };
+
+      // 若已全部缓存，直接跳过下载
+      if (isAllCached) {
+        done.ok = tasks.length;
+        bar.style.width = '100%';
+        updateProgress();
+        finish();
+        btn.onclick = () => { splash.style.display = 'none'; resolve(); };
+        return;
+      }
 
       // 预加载（并发 8）
       let cursor = 0;
@@ -330,6 +366,7 @@ export class UI {
     table.innerHTML = `
       <div class="sgs-topbar">
         <span class="sgs-topbar-title font-title">三国杀 · 身份模式</span>
+        <button class="sgs-icon-btn" id="sgs-toggle-pile">弃牌堆</button>
         <button class="sgs-icon-btn" id="sgs-toggle-log">日志</button>
         <button class="sgs-icon-btn" id="sgs-restart">重新开始</button>
         <a class="sgs-icon-btn sgs-home-btn" id="sgs-home" href="/" title="返回主站">← 返回主站</a>
@@ -338,10 +375,12 @@ export class UI {
       <div class="sgs-board">
         <div class="sgs-opponents" id="sgs-opponents"></div>
         <div class="sgs-center">
+          <div class="sgs-center-label">中央区（本回合打出）</div>
           <div class="sgs-processing" id="sgs-processing"></div>
           <div class="sgs-prompt hidden" id="sgs-prompt"></div>
         </div>
         <div class="sgs-log-panel" id="sgs-log"></div>
+        <div class="sgs-pile-panel hidden" id="sgs-pile"></div>
       </div>
       <div class="sgs-self" id="sgs-self">
         <div class="sgs-self-top">
@@ -382,6 +421,11 @@ export class UI {
       if (e.target.id === 'sgs-toggle-log') {
         $('#sgs-log').classList.toggle('hidden');
       }
+      if (e.target.id === 'sgs-toggle-pile') {
+        const pile = $('#sgs-pile');
+        pile.classList.toggle('hidden');
+        if (!pile.classList.contains('hidden')) this.renderDiscardPile();
+      }
       if (e.target.id === 'sgs-restart') {
         if (confirm('确定要重新开始一局吗？')) {
           location.reload();
@@ -399,7 +443,8 @@ export class UI {
   attach(game) {
     this.game = game;
     game.io = this;
-    game.onUpdate = () => this.render();
+    // 用合并渲染，避免高频 emit 造成头像闪烁
+    game.onUpdate = () => this.scheduleRender();
   }
 
   async showSplashForGame() {
@@ -428,13 +473,30 @@ export class UI {
       `回合 ${g.turnCount} · 牌堆 ${g.deck.length} · 弃牌 ${g.discardPile.length}`;
   }
 
+  /**
+   * 合并高频渲染请求
+   * ------------------------------------------------------------------
+   * 引擎每次 log/emit 都会触发 render，若直接重绘会导致
+   *   ① 头像 <img> 被反复重建 → 图片闪烁
+   *   ② CSS 动画被反复重启 → 武将牌「闪一下」
+   * 这里用 requestAnimationFrame 合并同一帧内的多次调用。
+   */
+  scheduleRender() {
+    if (this._rafPending) return;
+    this._rafPending = true;
+    const run = () => {
+      this._rafPending = false;
+      this.render();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    else setTimeout(run, 16);
+  }
+
   renderOpponents(me) {
     const g = this.game;
     const wrap = $('#sgs-opponents');
-    wrap.innerHTML = '';
-    const others = g.players.filter((p) => p !== me);
 
-    // 按「出牌顺序」排列：从自己的下家开始，逆时针/顺时针依次排开。
+    // 按「出牌顺序」排列：从自己的下家开始依次排开。
     // 这样左侧第一个就是下一个行动的角色，符合实际对战直觉。
     const alive = g.players.filter((p) => p.alive);
     const order = [...alive, ...g.players.filter((p) => !p.alive)];
@@ -442,22 +504,112 @@ export class UI {
     const rotated = myIdx >= 0
       ? [...order.slice(myIdx + 1), ...order.slice(0, myIdx)]
       : order;
-    // 只保留对手，且保持旋转后的相对顺序
     const sorted = rotated.filter((p) => p !== me);
 
-    sorted.forEach((p) => {
-      const node = this.buildPlayerNode(p, false);
-      wrap.appendChild(node);
-    });
+    // 座位顺序是否变化 —— 只有变化时才重建节点，否则原地更新
+    const wantOrder = sorted.map((p) => p.id).join(',');
+    const needRebuild = wrap.dataset.order !== wantOrder
+      || wrap.children.length !== sorted.length;
 
-    // 应用当前可选中状态
-    if (this.mode === 'targets') {
-      $$('.sgs-player', wrap).forEach((n) => {
-        const pid = +n.dataset.pid;
-        const p = g.players.find((x) => x.id === pid);
-        const ok = this.targetCandidates && this.targetCandidates.includes(p);
-        if (ok) n.classList.add('targetable');
+    if (needRebuild) {
+      wrap.dataset.order = wantOrder;
+      wrap.innerHTML = '';
+      sorted.forEach((p) => {
+        wrap.appendChild(this.buildPlayerNode(p, false));
       });
+    } else {
+      // 原地更新（不重建 <img>，避免头像闪烁）
+      [...wrap.children].forEach((node) => {
+        const pid = +node.dataset.pid;
+        const p = g.players.find((x) => x.id === pid);
+        if (p) this.updatePlayerNode(node, p, me);
+      });
+    }
+
+    // 可选中状态
+    $$('.sgs-player', wrap).forEach((n) => {
+      const pid = +n.dataset.pid;
+      const p = g.players.find((x) => x.id === pid);
+      const ok = this.mode === 'targets' && this.targetCandidates
+        && this.targetCandidates.includes(p) && !this.selectedTargets.includes(p);
+      n.classList.toggle('targetable', !!ok);
+      const av = n.querySelector('.sgs-avatar-wrap');
+      if (av) {
+        if (this.selectedTargets.includes(p)) {
+          av.style.boxShadow = '0 0 0 3px #7fd4a8, 0 0 22px rgba(127,212,168,0.8)';
+        } else if (av.style.boxShadow) {
+          av.style.boxShadow = '';
+        }
+      }
+    });
+  }
+
+  /**
+   * 更新已存在的玩家节点（不重建 DOM）
+   * ------------------------------------------------------------------
+   * 目的：避免每次重绘都重建 <img>，从而消除头像闪烁与动画重启。
+   * 只更新会变化的部分：体力、手牌数、徽章、状态类。
+   */
+  updatePlayerNode(node, p, me) {
+    const g = this.game;
+    if (!node) return;
+
+    node.classList.toggle('dead', !p.alive);
+    node.classList.toggle('current-turn', g.currentPlayer === p);
+
+    // 体力点：数量或状态变化时重建
+    const avWrap = node.querySelector('.sgs-avatar-wrap');
+    if (avWrap) {
+      const hp = avWrap.querySelector('.sgs-hp');
+      const needRebuild = !hp
+        || hp.children.length !== p.maxHp
+        || [...hp.children].some((d, i) => d.classList.contains('on') !== (i < p.hp));
+      if (needRebuild) {
+        if (hp) hp.remove();
+        const nhp = el('div', 'sgs-hp');
+        for (let i = 0; i < p.maxHp; i++) {
+          const d = el('div', 'sgs-hp-dot');
+          d.classList.add(i < p.hp ? 'on' : 'off');
+          nhp.appendChild(d);
+        }
+        avWrap.appendChild(nhp);
+      }
+
+      // 身份角标
+      const idBadge = avWrap.querySelector('.sgs-identity-badge');
+      if (idBadge) {
+        if (p.identityShown) {
+          idBadge.textContent = IDENTITY_LABEL[p.identity];
+          idBadge.style.background = IDENTITY_COLOR[p.identity];
+          idBadge.classList.remove('hidden');
+        } else {
+          idBadge.textContent = '?';
+          idBadge.classList.add('hidden');
+        }
+      }
+    }
+
+    // 徽章区（手牌数 / 装备 / 判定）
+    const badges = node.querySelector('.sgs-badges');
+    if (badges) {
+      const eqs = Object.values(p.equips).filter(Boolean);
+      const parts = [];
+      parts.push(`手 ${p.hand.length}`);
+      if (eqs.length) parts.push(`装 ${eqs.length}`);
+      if (p.judges.length) parts.push(`判 ${p.judges.length}`);
+      const sig = parts.join('|');
+      if (badges.dataset.sig !== sig) {
+        badges.dataset.sig = sig;
+        badges.innerHTML = '';
+        badges.appendChild(el('span', 'sgs-badge', `手 ${p.hand.length}`));
+        if (eqs.length) {
+          badges.appendChild(el('span', 'sgs-badge equip',
+            eqs.map((c) => (CARDS[c.name] || {}).label || c.name).join('/')));
+        }
+        if (p.judges.length) {
+          badges.appendChild(el('span', 'sgs-badge judge', `判 ${p.judges.length}`));
+        }
+      }
     }
   }
 
@@ -667,18 +819,59 @@ export class UI {
     // 手牌
     const hand = $('#sgs-self-hand');
     hand.innerHTML = '';
-    me.hand.forEach((c) => {
-      hand.appendChild(this.buildCardNode(c, me));
-    });
-    if (!me.hand.length) {
-      hand.appendChild(el('div', 'sgs-badge', '（无手牌）'));
+
+    // 若当前处于「从外部牌池选牌」（如五谷丰登、从他人处选牌），
+    // 则渲染那个牌池，而不是自己的手牌 —— 否则玩家无从下手。
+    if (this.mode === 'cards' && this.cardCandidates && this.cardPoolExternal) {
+      hand.appendChild(el('div', 'sgs-pool-label', this.poolLabel || '请选择一张牌'));
+      this.cardCandidates.forEach((c) => {
+        hand.appendChild(this.buildCardNode(c, me, false, true));
+      });
+      return;
     }
 
-    // 装备区展示
-    const eqs = Object.values(me.equips).filter(Boolean);
-    if (eqs.length) {
-      eqs.forEach((c) => hand.appendChild(this.buildCardNode(c, me, true)));
+    // 手牌区：装备牌按「武器→防具→宝物→进攻马→防御马」固定排在右侧
+    const handCards = me.hand.slice();
+    const sorted = this.sortHandCards(handCards, me);
+    sorted.hand.forEach((c) => hand.appendChild(this.buildCardNode(c, me)));
+    sorted.equips.forEach((c) => hand.appendChild(this.buildCardNode(c, me, true)));
+
+    if (!me.hand.length && !sorted.equips.length) {
+      hand.appendChild(el('div', 'sgs-badge', '（无手牌）'));
     }
+  }
+
+  /**
+   * 手牌排序
+   * ------------------------------------------------------------------
+   * 规则：
+   *   - 装备牌一律排在**最右侧**
+   *   - 装备之间按槽位固定顺序：武器 → 防具 → 宝物 → 进攻马 → 防御马
+   *   - 非装备牌保持原本顺序（摸到的先后）
+   */
+  sortHandCards(cards, me) {
+    const EQUIP_ORDER = { equip1: 1, equip2: 2, equip5: 3, equip4: 4, equip3: 5 };
+
+    const hand = [];
+    const equipInHand = [];
+    for (const c of cards) {
+      if (c.type === 'equip') equipInHand.push(c);
+      else hand.push(c);
+    }
+
+    // 已装备的牌（从装备区取出，按槽位排序）
+    const equipped = Object.entries(me.equips)
+      .filter(([, c]) => c)
+      .map(([slot, c]) => ({ slot, card: c }))
+      .sort((a, b) => (EQUIP_ORDER[a.slot] || 9) - (EQUIP_ORDER[b.slot] || 9))
+      .map((x) => x.card);
+
+    // 手牌里的装备也按槽位排
+    equipInHand.sort(
+      (a, b) => (EQUIP_ORDER[a.subtype] || 9) - (EQUIP_ORDER[b.subtype] || 9),
+    );
+
+    return { hand, equips: [...equipInHand, ...equipped] };
   }
 
   buildCardNode(card, owner, isEquip) {
@@ -701,18 +894,28 @@ export class UI {
     node.appendChild(face);
     node.title = `${card.text}\n${CARDS[card.name] ? CARDS[card.name].desc : ''}`;
 
-    if (isEquip) {
-      node.style.opacity = '0.85';
-      node.style.transform = 'scale(0.9)';
-    }
+    if (isEquip) node.classList.add('is-equip');
 
-    // 可选状态
-    if (this.mode === 'cards' && this.cardCandidates
-      && this.cardCandidates.includes(card) && !isEquip) {
+    // ---- 可点击状态判定 ----
+    // 三种情形：
+    //   1. 正在「从牌池选牌」→ 池内牌可点选
+    //   2. 正在「出牌阶段」     → 手牌可点击使用（可用性在点击后用窗口提示）
+    //   3. 其他情况            → 不可点，但**视觉上不置灰**，避免整手牌发暗
+    const inPool = this.cardCandidates && this.cardCandidates.includes(card);
+    const isPlayPhase = this.mode === 'action';
+    const isSelectMode = this.mode === 'cards';
+
+    if (isSelectMode && inPool) {
       node.classList.add('selectable');
       node.onclick = () => this.toggleCard(card);
-    } else if (!isEquip) {
+    } else if (isSelectMode && !inPool) {
+      // 选牌模式下，非候选牌才置灰
       node.classList.add('disabled');
+    } else if (isPlayPhase && !isEquip) {
+      // 出牌阶段：手牌可点（具体能否使用，点击时再校验并提示）
+      node.classList.add('playable');
+    } else if (isEquip) {
+      node.classList.add('equipped');
     }
 
     if (this.selectedCards.has(card)) node.classList.add('selected');
@@ -735,16 +938,102 @@ export class UI {
 
   renderProcessing() {
     const wrap = $('#sgs-processing');
-    wrap.innerHTML = '';
     const g = this.game;
-    // 显示判定区牌（当前回合玩家）
+
+    // ---- 中央区：本回合打出的牌 ----
+    // 这些牌同时属于弃牌堆；回合结束后会移入弃牌堆，中央区清空。
+    const center = g.getCenterZone();
+    const sig = center.map((c) => c.id).join(',');
+    if (wrap.dataset.sig !== sig) {
+      wrap.dataset.sig = sig;
+      wrap.innerHTML = '';
+      if (!center.length) {
+        // 空时给出提示，方便玩家理解这个区域
+        const empty = el('div', 'sgs-center-empty', '（本回合暂无打出的牌）');
+        wrap.appendChild(empty);
+      } else {
+        center.slice(-12).forEach((c) => {
+          const n = this.buildCardNode(c, g.currentPlayer, true);
+          wrap.appendChild(n);
+        });
+        if (center.length > 12) {
+          wrap.appendChild(el('div', 'sgs-center-more', `+${center.length - 12}`));
+        }
+      }
+    }
+
+    // ---- 判定区牌（当前回合玩家）----
     const cp = g.currentPlayer;
-    if (cp && cp.judges.length) {
-      cp.judges.forEach((c) => {
-        const n = this.buildCardNode(c, cp, true);
-        n.classList.remove('disabled');
-        wrap.appendChild(n);
+    const jSig = cp && cp.judges.length ? cp.judges.map((c) => c.id).join(',') : '';
+    if (wrap.dataset.jsig !== jSig) {
+      wrap.dataset.jsig = jSig;
+      if (cp && cp.judges.length) {
+        cp.judges.forEach((c) => {
+          const n = this.buildCardNode(c, cp, true);
+          n.title = `判定区：${c.text}`;
+          wrap.appendChild(n);
+        });
+      }
+    }
+  }
+
+  /**
+   * 弃牌堆面板
+   * ------------------------------------------------------------------
+   * 展示弃牌堆全部牌（含中央区，因为中央区也算弃牌堆）。
+   * 支持按类型筛选，便于玩家识别。
+   */
+  renderDiscardPile() {
+    const g = this.game;
+    const panel = $('#sgs-pile');
+    if (!panel) return;
+
+    const all = g.getDiscardPile();       // 含中央区
+    const center = g.getCenterZone();
+    const centerSet = new Set(center);
+
+    panel.innerHTML = '';
+
+    // 标题与统计
+    const head = el('div', 'sgs-pile-head');
+    head.appendChild(el('span', 'sgs-pile-title', '弃牌堆'));
+    head.appendChild(el('span', 'sgs-pile-stat',
+      `${all.length} 张（其中中央区 ${center.length} 张）`));
+    const close = el('button', 'sgs-icon-btn', '关闭');
+    close.onclick = () => panel.classList.add('hidden');
+    head.appendChild(close);
+    panel.appendChild(head);
+
+    if (!all.length) {
+      panel.appendChild(el('div', 'sgs-pile-empty', '弃牌堆为空'));
+      return;
+    }
+
+    // 按类型分组，便于快速识别
+    const groups = [
+      ['basic', '基本牌'],
+      ['trick', '锦囊牌'],
+      ['equip', '装备牌'],
+    ];
+
+    // 倒序显示（最近弃置的在前）
+    const listOf = (filterFn) => all.slice().reverse().filter(filterFn);
+
+    for (const [type, label] of groups) {
+      const list = listOf((c) => c.type === type);
+      if (!list.length) continue;
+
+      const sec = el('div', 'sgs-pile-section');
+      sec.appendChild(el('div', 'sgs-pile-section-title', `${label}（${list.length}）`));
+      const grid = el('div', 'sgs-pile-grid');
+      list.forEach((c) => {
+        const n = this.buildCardNode(c, null, true);
+        // 中央区的牌加高亮，以示「本回合」
+        if (centerSet.has(c)) n.classList.add('in-center');
+        grid.appendChild(n);
       });
+      sec.appendChild(grid);
+      panel.appendChild(sec);
     }
   }
 
@@ -796,16 +1085,17 @@ export class UI {
 
       if (!pool.length) { resolve([]); return; }
 
-      // 单选时的快捷路径
       this.mode = 'cards';
       this.promptText = prompt;
       this.cardCandidates = pool;
       this.cardMin = min;
       this.cardMax = max;
       this.selectedCards = new Set();
-      if (max === 1 && pool.length === 1 && min === 1) {
-        // 只有一个选择，但仍让玩家点，避免误操作
-      }
+      // 标记这是「外部牌池」（如五谷丰登），需要单独渲染出来
+      this.cardPoolExternal = !!cardList || !!fromPlayer;
+      this.poolLabel = cardList
+        ? '请从下列牌中选择'
+        : (fromPlayer ? `请选择 ${fromPlayer.name} 的一张牌` : '');
 
       this.render();
       this._showHint();
@@ -815,6 +1105,8 @@ export class UI {
       const cleanup = () => {
         this.mode = null;
         this.cardCandidates = null;
+        this.cardPoolExternal = false;
+        this.poolLabel = '';
         this.selectedCards = new Set();
         this._hideHint();
         $('#sgs-hint-ok').onclick = null;
@@ -1074,21 +1366,68 @@ export class UI {
       };
 
       // 绑定手牌点击
-      $('#sgs-self-hand').onclick = (e) => {
+      $('#sgs-self-hand').onclick = async (e) => {
         const cardNode = e.target.closest('.sgs-card');
         if (!cardNode) return;
         const cid = +cardNode.dataset.cid;
-        const card = hand.find((c) => c.id === cid);
+        const card = hand.find((c) => c.id === cid)
+          || Object.values(player.equips).find((c) => c && c.id === cid);
         if (!card) return;
+
         // 检查是否可用
         const check = this.checkCardUsable(player, card, game);
         if (!check.ok) {
           this.setPrompt(check.reason);
-          setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1400);
+          setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
           return;
         }
+
+        let targets = [];
+
+        // ---- 自动指定目标（桃/无中生有/闪电等只对自己）----
+        if (check.autoTargets && check.autoTargets.length) {
+          targets = check.autoTargets.slice();
+        } else if (check.needTargets && check.needTargets.length) {
+          // ---- 需要玩家点选目标 ----
+          const picked = await this.chooseTargets(player, {
+            prompt: check.targetPrompt || `【${(CARDS[card.name] || {}).fullname}】请选择目标`,
+            candidates: check.needTargets,
+            min: check.targetMin || 1,
+            max: check.targetMax || 1,
+          });
+          if (!picked || !picked.length) {
+            // 玩家取消 → 回到出牌阶段，不消耗这张牌
+            this.setPrompt('已取消，请重新选择要使用的牌');
+            setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1400);
+            return;
+          }
+          targets = picked;
+
+          // 借刀杀人：需要第二个目标（其攻击范围内的角色）
+          if (check.needSecond) {
+            const holder = picked[0];
+            const victims = game.players.filter(
+              (p) => p.alive && p !== holder && p !== player && holder.inAttackRange(p),
+            );
+            if (victims.length) {
+              const v = await this.chooseTargets(player, {
+                prompt: `【借刀杀人】请选择 ${holder.name} 攻击范围内的目标`,
+                candidates: victims,
+                min: 1,
+                max: 1,
+              });
+              if (v && v.length) targets.push(v[0]);
+            }
+            if (targets.length < 2) {
+              this.setPrompt('已取消，请重新选择要使用的牌');
+              setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1400);
+              return;
+            }
+          }
+        }
+
         cleanup();
-        resolve({ type: 'use', card, targets: [] });
+        resolve({ type: 'use', card, targets });
       };
     });
   }
@@ -1105,60 +1444,102 @@ export class UI {
     const others = g.players.filter((p) => p.alive && p !== player);
 
     switch (card.name) {
+      // ---- 【杀】：攻击范围内的一名其他角色 ----
       case 'sha': {
         const used = player.flags.usedShaThisTurn || 0;
-        let unlimited = player.hasSkill('paoxiao');
-        for (const c of Object.values(player.equips).filter(Boolean)) {
-          if (CARDS[c.name] && CARDS[c.name].equipSkill === 'zhuge_skill') unlimited = true;
-        }
+        let unlimited = game.shaUnlimited(player);
         if (!unlimited && used >= 1) return { ok: false, reason: '本回合已使用过【杀】' };
         const cands = others.filter((p) => player.inAttackRange(p)
-          && !(p.hasSkill('kongcheng') && p.countCards('h') === 0));
+          && game.canBeTargeted(p, card));
         if (!cands.length) return { ok: false, reason: '攻击范围内没有可选目标' };
-        return { ok: true, needTargets: cands };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【杀】请选择攻击范围内的一名角色',
+        };
       }
+
+      // ---- 【桃】：只对自己 ----
       case 'tao': {
         if (!player.isDamaged()) return { ok: false, reason: '体力已满，无需使用【桃】' };
-        return { ok: true, needTargets: [player], noPrompt: true };
+        return { ok: true, autoTargets: [player] };
       }
-      case 'wuzhong': return { ok: true, needTargets: [player], noPrompt: true };
+
+      // ---- 【无中生有】：只对自己 ----
+      case 'wuzhong':
+        return { ok: true, autoTargets: [player] };
+
+      // ---- 【闪电】：只对自己 ----
+      case 'shandian': {
+        if (player.judges.length >= 2) return { ok: false, reason: '判定区已满' };
+        return { ok: true, autoTargets: [player] };
+      }
+
+      // ---- 【决斗】：一名其他角色 ----
       case 'juedou': {
-        const cands = others.filter((p) => !(p.hasSkill('kongcheng') && p.countCards('h') === 0));
+        const cands = others.filter((p) => game.canBeTargeted(p, card));
         if (!cands.length) return { ok: false, reason: '没有可选目标' };
-        return { ok: true, needTargets: cands };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【决斗】请选择一名其他角色',
+        };
       }
+
+      // ---- 【过河拆桥】：区域内有牌的其他角色 ----
       case 'guohe': {
         const cands = others.filter((p) => p.countCards('hej') > 0);
         if (!cands.length) return { ok: false, reason: '没有区域内有牌的目标' };
-        return { ok: true, needTargets: cands };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【过河拆桥】请选择一名区域内有牌的角色',
+        };
       }
+
+      // ---- 【顺手牵羊】：距离 1 内且区域内有牌 ----
       case 'shunshou': {
-        const noDist = player.hasSkill('qicai');
+        const noDist = game.trickNoDistance(player);
         const cands = others.filter((p) => p.countCards('hej') > 0
           && (noDist || player.distanceTo(p) <= 1)
-          && !(p.hasSkill('qianxun')));
+          && game.canBeTargeted(p, card));
         if (!cands.length) return { ok: false, reason: '距离 1 内没有可选目标' };
-        return { ok: true, needTargets: cands };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【顺手牵羊】请选择距离 1 内的一名角色',
+        };
       }
+
+      // ---- 【乐不思蜀】：一名**其他**角色（不能是自己）----
       case 'lebu': {
-        const cands = others.filter((p) => !(p.hasSkill('qianxun')) && p.judges.length < 2);
-        if (!cands.length) return { ok: false, reason: '没有可选目标' };
-        return { ok: true, needTargets: cands };
+        const cands = others.filter((p) => game.canBeTargeted(p, card)
+          && p.judges.length < 2);
+        if (!cands.length) return { ok: false, reason: '没有可选目标（不能对自己使用）' };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【乐不思蜀】请选择一名其他角色（不能选自己）',
+        };
       }
-      case 'shandian': {
-        if (player.judges.length >= 2) return { ok: false, reason: '判定区已满' };
-        return { ok: true, needTargets: [player], noPrompt: true };
-      }
-      case 'wugu': case 'taoyuan': case 'nanman': case 'wanjian':
-        return { ok: true, needTargets: null, noPrompt: true };
+
+      // ---- 【借刀杀人】：持武器者 + 其攻击范围内的一名角色 ----
       case 'jiedao': {
         const holders = others.filter((p) => p.equips.equip1);
         if (!holders.length) return { ok: false, reason: '没有装备武器的目标' };
-        return { ok: true, needTargets: holders, needSecond: true };
+        return {
+          ok: true, needTargets: holders, targetMin: 1, targetMax: 1,
+          needSecond: true,
+          targetPrompt: '【借刀杀人】请选择一名装备武器的角色',
+        };
       }
+
+      // ---- 无需选目标的牌 ----
+      case 'wugu':
+      case 'taoyuan':
+      case 'nanman':
+      case 'wanjian':
+        return { ok: true };
+
       default:
-        if (def.type === 'equip') return { ok: true, needTargets: null, noPrompt: true };
-        return { ok: true, needTargets: null, noPrompt: true };
+        // 装备牌：直接装备
+        if (def.type === 'equip') return { ok: true };
+        return { ok: true };
     }
   }
 
