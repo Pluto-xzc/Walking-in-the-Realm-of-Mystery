@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#4a3f33"/>
+      <stop offset="100%" stop-color="#241e18"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="38%" r="52%">
+      <stop offset="0%" stop-color="#b03a3a" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#b03a3a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="300" height="400" fill="url(#bg)"/>
+  <rect width="300" height="400" fill="url(#halo)"/>
+  <circle cx="150" cy="150" r="66" fill="none" stroke="#b03a3a" stroke-width="2" stroke-opacity="0.5"/>
+  <text x="150" y="175" text-anchor="middle"
+        font-family="KaiTi, STKaiti, 'Kaiti SC', serif" font-size="76"
+        font-weight="700" fill="#e8c45a" fill-opacity="0.9">马</text>
+  <rect x="20" y="346" width="260" height="3" rx="1.5" fill="#b03a3a" fill-opacity="0.6"/>
+</svg>
