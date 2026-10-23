@@ -1,0 +1,693 @@
+/* ==========================================================================
+   单机三国杀 · 界面样式
+   参考无名杀的深色木质牌桌风格，但采用现代 CSS 重写
+   ========================================================================== */
+
+:root {
+  --bg-deep: #1a1613;
+  --bg-wood: #2b241d;
+  --bg-panel: #f5efe4;
+  --bg-panel-dark: #3a3129;
+  --gold: #d4a017;
+  --gold-light: #e8c45a;
+  --red: #b03a3a;
+  --green: #3d8b6e;
+  --blue: #4a6fa5;
+  --qun: #7a6a55;
+  --text: #2b241d;
+  --text-light: #f5efe4;
+  --border: #5a4c3c;
+  --card-w: 62px;
+  --card-h: 88px;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  background: var(--bg-deep);
+  color: var(--text-light);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 字体声明：使用通用字体族，避免依赖外部字体文件 */
+.font-title { font-family: "KaiTi", "STKaiti", "Kaiti SC", serif; }
+
+/* ==========================================================================
+   开屏加载 / 开源声明
+   ========================================================================== */
+#sgs-splash {
+  position: fixed; inset: 0; z-index: 9000;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(212, 160, 23, 0.12), transparent 60%),
+    linear-gradient(160deg, #1a1613 0%, #2b241d 100%);
+  overflow-y: auto;
+}
+
+.sgs-splash-inner {
+  width: 100%; max-width: 720px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+
+.sgs-logo {
+  text-align: center;
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: clamp(30px, 6vw, 48px);
+  font-weight: 700;
+  letter-spacing: 10px;
+  color: var(--gold-light);
+  text-shadow: 0 2px 20px rgba(212, 160, 23, 0.4);
+}
+
+.sgs-logo-sub {
+  text-align: center;
+  font-size: 13px;
+  color: #9a8b78;
+  letter-spacing: 3px;
+  margin-top: -8px;
+}
+
+.sgs-notice {
+  background: rgba(245, 239, 228, 0.06);
+  border: 1px solid rgba(212, 160, 23, 0.28);
+  border-radius: 10px;
+  padding: 16px 18px;
+  font-size: 13px;
+  line-height: 1.85;
+  color: #cbbfa8;
+}
+
+.sgs-notice h3 {
+  font-size: 14px;
+  color: var(--gold-light);
+  margin-bottom: 10px;
+  letter-spacing: 1px;
+  font-weight: 600;
+}
+
+.sgs-notice ul { margin: 0; padding-left: 18px; }
+.sgs-notice li { margin: 3px 0; }
+.sgs-notice a { color: var(--gold-light); text-decoration: none; border-bottom: 1px dotted; }
+.sgs-notice a:hover { color: #fff; }
+
+.sgs-notice .hl { color: #e8c45a; font-weight: 600; }
+
+/* 加载进度 */
+.sgs-loading {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sgs-loading-text {
+  font-size: 13px; color: #b9ab95; text-align: center;
+}
+.sgs-progress {
+  height: 6px; border-radius: 3px;
+  background: rgba(245, 239, 228, 0.12);
+  overflow: hidden;
+}
+.sgs-progress-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--gold), var(--gold-light));
+  transition: width 0.3s ease;
+}
+
+.sgs-btn {
+  align-self: center;
+  padding: 12px 44px;
+  font-size: 16px;
+  font-family: inherit;
+  letter-spacing: 3px;
+  color: #1a1613;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold));
+  border: none; border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(212, 160, 23, 0.35);
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.sgs-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 22px rgba(212, 160, 23, 0.5); }
+.sgs-btn:active:not(:disabled) { transform: translateY(0); }
+.sgs-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ==========================================================================
+   牌桌
+   ========================================================================== */
+#sgs-table {
+  position: fixed; inset: 0;
+  display: none;
+  flex-direction: column;
+  /* 木纹背景图（程序生成），叠加径向渐变保证可读性；图片缺失时自动回退到纯渐变 */
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(58, 49, 40, 0.55) 0%, rgba(34, 28, 22, 0.75) 55%, rgba(20, 16, 13, 0.9) 100%),
+    url('/noname/assets/background/table.svg') center / cover no-repeat,
+    radial-gradient(ellipse at 50% 42%, #3a3128 0%, #221c16 55%, #14100d 100%);
+}
+
+#sgs-table.active { display: flex; }
+
+/* 顶部信息条 */
+.sgs-topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px;
+  background: rgba(20, 16, 13, 0.85);
+  border-bottom: 1px solid rgba(212, 160, 23, 0.2);
+  flex-shrink: 0;
+  z-index: 30;
+}
+.sgs-topbar-title {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 16px; color: var(--gold-light);
+  letter-spacing: 2px;
+}
+.sgs-topbar-info { font-size: 12px; color: #9a8b78; margin-left: auto; }
+.sgs-icon-btn {
+  padding: 5px 12px; font-size: 12px; font-family: inherit;
+  color: #cbbfa8; background: rgba(245, 239, 228, 0.08);
+  border: 1px solid rgba(245, 239, 228, 0.15);
+  border-radius: 6px; cursor: pointer;
+  transition: background 0.15s;
+}
+.sgs-icon-btn:hover { background: rgba(245, 239, 228, 0.16); color: #fff; }
+
+/* 座位区 */
+.sgs-board {
+  flex: 1; position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 对手 */
+.sgs-opponents {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: clamp(6px, 1.6vw, 20px);
+  flex-wrap: nowrap;
+  padding: 12px 10px 0;
+  height: 100%;
+}
+
+.sgs-player {
+  position: relative;
+  width: clamp(96px, 13vw, 150px);
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px;
+  transition: transform 0.2s;
+}
+
+.sgs-player.targetable { cursor: pointer; }
+.sgs-player.targetable .sgs-avatar-wrap {
+  box-shadow: 0 0 0 3px var(--gold-light), 0 0 20px rgba(212, 160, 23, 0.6);
+  animation: sgs-pulse 1.2s infinite;
+}
+@keyframes sgs-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--gold-light), 0 0 20px rgba(212, 160, 23, 0.6); }
+  50% { box-shadow: 0 0 0 3px var(--gold-light), 0 0 32px rgba(212, 160, 23, 0.95); }
+}
+
+.sgs-player.dead { filter: grayscale(1) brightness(0.45); opacity: 0.7; }
+.sgs-player.current-turn .sgs-avatar-wrap {
+  box-shadow: 0 0 0 3px #7fd4a8, 0 0 18px rgba(127, 212, 168, 0.7);
+}
+
+.sgs-avatar-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #3a3129, #241e18);
+  border: 2px solid var(--border);
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.2s;
+}
+
+.sgs-avatar {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+/* 无图片时的占位 */
+.sgs-avatar-fallback {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px;
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: clamp(20px, 3vw, 30px);
+  color: var(--gold-light);
+  background: linear-gradient(160deg, #4a3f33, #2b241d);
+}
+.sgs-avatar-fallback .sex {
+  font-size: 12px; color: #9a8b78; font-family: sans-serif;
+}
+
+/* 势力角标 */
+.sgs-group-badge {
+  position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+  font-family: "KaiTi", "STKaiti", serif;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+/* 身份角标 */
+.sgs-identity-badge {
+  position: absolute; top: 3px; right: 3px;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+.sgs-identity-badge.hidden { background: #4a4238 !important; color: #8a7d6b; }
+
+/* 体力 */
+.sgs-hp {
+  position: absolute; bottom: 3px; left: 3px; right: 3px;
+  display: flex; flex-wrap: wrap; gap: 2px;
+  justify-content: center;
+}
+.sgs-hp-dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.5);
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.3);
+}
+.sgs-hp-dot.on { background: linear-gradient(180deg, #7fd4a8, #3d8b6e); }
+.sgs-hp-dot.off { background: #3a3129; }
+.sgs-hp-dot.armor { background: linear-gradient(180deg, #e8c45a, #d4a017); }
+
+/* 手牌数 / 装备 / 判定 */
+.sgs-badges {
+  display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
+  font-size: 11px;
+}
+.sgs-badge {
+  padding: 1px 6px; border-radius: 4px;
+  background: rgba(245, 239, 228, 0.12);
+  border: 1px solid rgba(245, 239, 228, 0.18);
+  color: #d8cdb8;
+  white-space: nowrap;
+}
+.sgs-badge.judge { background: rgba(176, 58, 58, 0.3); border-color: rgba(176,58,58,0.5); }
+.sgs-badge.equip { background: rgba(74, 111, 165, 0.28); border-color: rgba(74,111,165,0.5); }
+
+.sgs-pname {
+  font-size: 12px; color: #e8dcc6; text-align: center;
+  font-weight: 600; letter-spacing: 1px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 中央提示区 */
+.sgs-center {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 25;
+  display: flex; flex-direction: column;
+  align-items: center; gap: 10px;
+  pointer-events: none;
+  width: min(92vw, 620px);
+}
+
+.sgs-prompt {
+  padding: 10px 22px;
+  background: rgba(20, 16, 13, 0.92);
+  border: 1px solid rgba(212, 160, 23, 0.4);
+  border-radius: 10px;
+  font-size: 14px; color: var(--gold-light);
+  text-align: center; line-height: 1.6;
+  box-shadow: var(--shadow);
+  max-width: 100%;
+}
+.sgs-prompt.hidden { display: none; }
+
+/* 处理区（正在结算的牌） */
+.sgs-processing {
+  display: flex; gap: 6px; justify-content: center;
+  min-height: 0;
+}
+.sgs-processing .sgs-card { transform: scale(0.9); }
+
+/* ==========================================================================
+   卡牌
+   ========================================================================== */
+.sgs-card {
+  position: relative;
+  width: var(--card-w); height: var(--card-h);
+  border-radius: 5px;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-panel);
+  border: 1px solid #b9ab95;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  transition: transform 0.15s, box-shadow 0.15s, outline-color 0.15s;
+  overflow: hidden;
+}
+
+.sgs-card .card-face {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  padding: 3px;
+  color: var(--text);
+}
+
+.sgs-card .card-corner {
+  display: flex; align-items: baseline; gap: 1px;
+  font-size: 12px; font-weight: 700; line-height: 1;
+}
+.sgs-card .card-corner .num { font-size: 13px; }
+.sgs-card.red .card-corner { color: #c0392b; }
+.sgs-card.black .card-corner { color: #2b241d; }
+
+.sgs-card .card-name {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 22px; font-weight: 700;
+  line-height: 1.05;
+  text-align: center;
+  word-break: break-all;
+  padding: 0 2px;
+}
+.sgs-card.red .card-name { color: #b03a3a; }
+.sgs-card.black .card-name { color: #2b241d; }
+
+.sgs-card .card-type-strip {
+  height: 3px; border-radius: 2px;
+  background: #8a7d6b;
+}
+.sgs-card.type-basic .card-type-strip { background: #6b8e5a; }
+.sgs-card.type-trick .card-type-strip { background: #8b6bab; }
+.sgs-card.type-equip .card-type-strip { background: #5a7fa5; }
+
+.sgs-card .card-sub {
+  position: absolute; bottom: 4px; right: 4px;
+  font-size: 9px; color: #8a7d6b;
+}
+
+/* 卡牌状态 */
+.sgs-card.selectable:hover {
+  transform: translateY(-10px);
+  box-shadow: 0 8px 20px rgba(212, 160, 23, 0.5);
+}
+.sgs-card.selected {
+  outline: 3px solid var(--gold-light);
+  outline-offset: 1px;
+  transform: translateY(-12px);
+}
+.sgs-card.disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.6); }
+.sgs-card.disabled:hover { transform: none; }
+
+/* 卡背 */
+.sgs-card.cardback {
+  background:
+    repeating-linear-gradient(45deg, #6b4a2f 0 6px, #5a3d26 6px 12px);
+  border-color: #4a3120;
+}
+.sgs-card.cardback::after {
+  content: "杀";
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 26px; color: rgba(232, 196, 90, 0.55);
+}
+
+/* ==========================================================================
+   玩家区（自己）
+   ========================================================================== */
+.sgs-self {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  background: linear-gradient(180deg, rgba(20,16,13,0.6), rgba(20,16,13,0.95));
+  border-top: 1px solid rgba(212, 160, 23, 0.25);
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+.sgs-self-top {
+  display: flex; align-items: center; gap: 12px;
+}
+
+.sgs-self-avatar {
+  position: relative;
+  width: 54px; height: 72px;
+  border-radius: 6px; overflow: hidden;
+  border: 2px solid var(--gold);
+  flex-shrink: 0;
+  box-shadow: var(--shadow);
+}
+.sgs-self-avatar img, .sgs-self-avatar .sgs-avatar-fallback { width: 100%; height: 100%; object-fit: cover; }
+
+.sgs-self-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sgs-self-name {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 17px; color: var(--gold-light); letter-spacing: 1px;
+  display: flex; align-items: center; gap: 8px;
+}
+.sgs-self-name .grp {
+  font-size: 11px; padding: 1px 6px; border-radius: 4px;
+  color: #fff; font-family: sans-serif; font-weight: 700;
+}
+.sgs-self-skills { display: flex; flex-wrap: wrap; gap: 5px; }
+.sgs-skill-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  background: rgba(212, 160, 23, 0.16);
+  border: 1px solid rgba(212, 160, 23, 0.4);
+  color: var(--gold-light);
+  cursor: help;
+}
+.sgs-skill-chip.locked { background: rgba(176,58,58,0.18); border-color: rgba(176,58,58,0.45); }
+
+.sgs-self-hand {
+  display: flex; gap: 6px;
+  overflow-x: auto; overflow-y: visible;
+  padding: 14px 4px 6px;
+  min-height: calc(var(--card-h) + 20px);
+  scrollbar-width: thin;
+}
+.sgs-self-hand::-webkit-scrollbar { height: 6px; }
+.sgs-self-hand::-webkit-scrollbar-thumb { background: rgba(212,160,23,0.3); border-radius: 3px; }
+
+/* ==========================================================================
+   操作区
+   ========================================================================== */
+.sgs-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  align-items: center;
+  padding: 6px 12px 8px;
+  min-height: 44px;
+}
+
+.sgs-act-btn {
+  padding: 8px 20px;
+  font-size: 13px; font-family: inherit;
+  border-radius: 7px;
+  border: 1px solid rgba(212, 160, 23, 0.5);
+  background: rgba(212, 160, 23, 0.14);
+  color: var(--gold-light);
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+.sgs-act-btn:hover:not(:disabled) { background: rgba(212, 160, 23, 0.3); }
+.sgs-act-btn:active:not(:disabled) { transform: scale(0.97); }
+.sgs-act-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.sgs-act-btn.primary {
+  background: linear-gradient(180deg, var(--gold-light), var(--gold));
+  color: #1a1613; font-weight: 700; border-color: transparent;
+}
+.sgs-act-btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+.sgs-act-btn.danger { border-color: rgba(176,58,58,0.6); color: #e89a9a; background: rgba(176,58,58,0.16); }
+.sgs-act-btn.danger:hover:not(:disabled) { background: rgba(176,58,58,0.3); }
+
+/* 技能按钮区 */
+.sgs-skill-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ==========================================================================
+   日志
+   ========================================================================== */
+.sgs-log-panel {
+  position: absolute; top: 8px; right: 8px;
+  width: min(280px, 34vw);
+  max-height: 38vh;
+  overflow-y: auto;
+  background: rgba(20, 16, 13, 0.82);
+  border: 1px solid rgba(212, 160, 23, 0.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11.5px; line-height: 1.65;
+  color: #b9ab95;
+  z-index: 20;
+  scrollbar-width: thin;
+}
+.sgs-log-panel.hidden { display: none; }
+.sgs-log-panel::-webkit-scrollbar { width: 4px; }
+.sgs-log-panel::-webkit-scrollbar-thumb { background: rgba(212,160,23,0.3); border-radius: 2px; }
+.sgs-log-line { padding: 1px 0; border-bottom: 1px solid rgba(245,239,228,0.04); }
+.sgs-log-line.hl { color: var(--gold-light); }
+
+/* ==========================================================================
+   弹窗（选将 / 结算）
+   ========================================================================== */
+.sgs-modal {
+  position: fixed; inset: 0; z-index: 8000;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(10, 8, 6, 0.88);
+  padding: 20px;
+  overflow-y: auto;
+}
+.sgs-modal.active { display: flex; }
+
+.sgs-modal-box {
+  width: 100%; max-width: 780px;
+  background: linear-gradient(180deg, #332b23, #241e18);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  border-radius: 14px;
+  padding: 22px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  max-height: 90vh; overflow-y: auto;
+}
+
+.sgs-modal-title {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 22px; color: var(--gold-light);
+  text-align: center; letter-spacing: 4px;
+  margin-bottom: 6px;
+}
+.sgs-modal-sub {
+  text-align: center; font-size: 12px; color: #9a8b78;
+  margin-bottom: 18px;
+}
+
+/* 选将网格 */
+.sgs-char-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 12px;
+}
+.sgs-char-pick {
+  position: relative;
+  border-radius: 8px; overflow: hidden;
+  border: 2px solid var(--border);
+  background: #2b241d;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.sgs-char-pick:hover {
+  transform: translateY(-4px);
+  border-color: var(--gold-light);
+  box-shadow: 0 8px 20px rgba(212, 160, 23, 0.4);
+}
+.sgs-char-pick.selected {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 3px rgba(212, 160, 23, 0.5);
+}
+.sgs-char-pick .pick-img {
+  width: 100%; aspect-ratio: 3/4;
+  object-fit: cover; object-position: top center;
+  display: block;
+}
+.sgs-char-pick .pick-fallback {
+  width: 100%; aspect-ratio: 3/4;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 30px; color: var(--gold-light);
+  background: linear-gradient(160deg, #4a3f33, #2b241d);
+}
+.sgs-char-pick .pick-info {
+  padding: 5px 6px;
+  background: rgba(20,16,13,0.9);
+}
+.sgs-char-pick .pick-name {
+  font-size: 13px; color: #e8dcc6; text-align: center;
+  font-weight: 600; letter-spacing: 1px;
+  font-family: "KaiTi", "STKaiti", serif;
+}
+.sgs-char-pick .pick-skills {
+  font-size: 10px; color: #9a8b78; text-align: center;
+  margin-top: 2px; line-height: 1.3;
+}
+
+/* 结算 */
+.sgs-result {
+  text-align: center; padding: 10px 0;
+}
+.sgs-result-big {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 42px; letter-spacing: 8px;
+  margin-bottom: 8px;
+}
+.sgs-result-big.win { color: #7fd4a8; text-shadow: 0 0 30px rgba(127,212,168,0.6); }
+.sgs-result-big.lose { color: #e89a9a; text-shadow: 0 0 30px rgba(232,154,154,0.5); }
+.sgs-result-sub { font-size: 14px; color: #b9ab95; line-height: 1.9; }
+
+.sgs-result-list {
+  margin: 18px 0; display: flex; flex-direction: column; gap: 8px;
+}
+.sgs-result-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 8px;
+  background: rgba(245, 239, 228, 0.05);
+  border: 1px solid rgba(245,239,228,0.08);
+  font-size: 13px;
+}
+.sgs-result-row.me { border-color: rgba(212,160,23,0.5); background: rgba(212,160,23,0.1); }
+.sgs-result-row .rname { font-weight: 600; color: #e8dcc6; min-width: 72px; }
+.sgs-result-row .rid { padding: 1px 8px; border-radius: 4px; font-size: 11px; color: #fff; }
+.sgs-result-row .rstate { margin-left: auto; font-size: 12px; color: #9a8b78; }
+
+/* ==========================================================================
+   选牌/选目标遮罩提示
+   ========================================================================== */
+.sgs-select-hint {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  z-index: 7000;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, rgba(20,16,13,0.7), rgba(20,16,13,0.97));
+  border-top: 1px solid rgba(212, 160, 23, 0.4);
+  display: none;
+  flex-direction: column; gap: 8px;
+  align-items: center;
+}
+.sgs-select-hint.active { display: flex; }
+.sgs-select-hint .hint-text {
+  font-size: 14px; color: var(--gold-light); text-align: center;
+}
+.sgs-select-hint .hint-btns { display: flex; gap: 10px; }
+
+/* ==========================================================================
+   响应式
+   ========================================================================== */
+@media (max-width: 860px) {
+  :root { --card-w: 52px; --card-h: 74px; }
+  .sgs-log-panel { width: 150px; font-size: 10.5px; max-height: 26vh; }
+  .sgs-card .card-name { font-size: 18px; }
+}
+
+@media (max-width: 560px) {
+  :root { --card-w: 44px; --card-h: 63px; }
+  .sgs-player { width: clamp(70px, 17vw, 100px); }
+  .sgs-opponents { gap: 4px; padding: 6px 4px 0; }
+  .sgs-log-panel { display: none; }
+  .sgs-card .card-name { font-size: 15px; }
+  .sgs-card .card-corner { font-size: 10px; }
+  .sgs-topbar { padding: 5px 8px; gap: 6px; }
+  .sgs-topbar-title { font-size: 13px; }
+  .sgs-self-hand { padding: 10px 2px 4px; }
+  .sgs-act-btn { padding: 7px 14px; font-size: 12px; }
+  .sgs-modal-box { padding: 16px; }
+  .sgs-char-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .sgs-result-big { font-size: 30px; letter-spacing: 5px; }
+}
+
+/* 牌不足时的横向滚动提示 */
+.sgs-self-hand { scroll-behavior: smooth; }
