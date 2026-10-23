@@ -55,6 +55,22 @@ export function tableBgPath() {
 }
 
 /**
+ * 推导「主站」地址
+ * ------------------------------------------------------------------
+ * 站点结构：<主站>/noname/ 是游戏目录，
+ * 因此从当前路径去掉 /noname/ 及其之后的部分，就是主站根。
+ * 兼容部署在子路径（如 /docs/noname/）的情况。
+ */
+export function resolveHomeHref() {
+  const m = location.pathname.match(/^(.*?)\/noname(\/|$)/);
+  if (m) {
+    const base = m[1];
+    return base ? base + '/' : '/';
+  }
+  return '../';   // 兜底：退到上一级
+}
+
+/**
  * 统一的「图片三级回退」绑定
  *   第一级：你放置的 PNG（charImgPath）
  *   第二级：内置 SVG 占位图（charFallbackPath）
@@ -164,10 +180,15 @@ export class UI {
       loading.appendChild(prog);
       inner.appendChild(loading);
 
-      // 开始按钮
+      // 开始按钮 + 返回主站
+      const btnRow = el('div', 'sgs-btn-row');
       const btn = el('button', 'sgs-btn', '开 始 游 戏');
       btn.disabled = true;
-      inner.appendChild(btn);
+      btnRow.appendChild(btn);
+      const backLink = el('a', 'sgs-btn sgs-btn-ghost', '返 回 主 站');
+      backLink.href = resolveHomeHref();
+      btnRow.appendChild(backLink);
+      inner.appendChild(btnRow);
 
       // 统计
       const stat = el('div', 'sgs-logo-sub');
@@ -311,6 +332,7 @@ export class UI {
         <span class="sgs-topbar-title font-title">三国杀 · 身份模式</span>
         <button class="sgs-icon-btn" id="sgs-toggle-log">日志</button>
         <button class="sgs-icon-btn" id="sgs-restart">重新开始</button>
+        <a class="sgs-icon-btn sgs-home-btn" id="sgs-home" href="/" title="返回主站">← 返回主站</a>
         <span class="sgs-topbar-info" id="sgs-topbar-info"></span>
       </div>
       <div class="sgs-board">
@@ -366,6 +388,10 @@ export class UI {
         }
       }
     });
+
+    // 「返回主站」：从当前页面路径推导站点根
+    const home = document.getElementById('sgs-home');
+    if (home) home.href = resolveHomeHref();
   }
 
   /* ---------------- 引擎 io 接口 ---------------- */
@@ -407,10 +433,19 @@ export class UI {
     const wrap = $('#sgs-opponents');
     wrap.innerHTML = '';
     const others = g.players.filter((p) => p !== me);
-    // 按座位顺序排列
-    others.sort((a, b) => a.seat - b.seat);
 
-    others.forEach((p) => {
+    // 按「出牌顺序」排列：从自己的下家开始，逆时针/顺时针依次排开。
+    // 这样左侧第一个就是下一个行动的角色，符合实际对战直觉。
+    const alive = g.players.filter((p) => p.alive);
+    const order = [...alive, ...g.players.filter((p) => !p.alive)];
+    const myIdx = order.indexOf(me);
+    const rotated = myIdx >= 0
+      ? [...order.slice(myIdx + 1), ...order.slice(0, myIdx)]
+      : order;
+    // 只保留对手，且保持旋转后的相对顺序
+    const sorted = rotated.filter((p) => p !== me);
+
+    sorted.forEach((p) => {
       const node = this.buildPlayerNode(p, false);
       wrap.appendChild(node);
     });
@@ -424,6 +459,16 @@ export class UI {
         if (ok) n.classList.add('targetable');
       });
     }
+  }
+
+  /** 座位号显示文本（从自己开始，自己为 1 号位） */
+  seatLabel(player, me) {
+    if (player === me) return '1';
+    const g = this.game;
+    const n = g.players.length;
+    // 以自己为 1 号，按座位顺序递增
+    const diff = (player.seat - me.seat + n) % n;
+    return String(diff + 1);
   }
 
   buildPlayerNode(p, isSelf) {
@@ -447,6 +492,15 @@ export class UI {
     // 势力
     const grp = GROUPS[p.group];
     avWrap.appendChild(el('div', 'sgs-group-badge', grp.label)).style.background = grp.color;
+
+    // 座位号（左上角，便于识别行动顺序）
+    const me = g.players.find((x) => x.isHuman) || g.players[0];
+    const seatEl = el('div', 'sgs-seat-badge', this.seatLabel(p, me));
+    if (p === me) seatEl.classList.add('me');
+    seatEl.title = p === me
+      ? '你是 1 号位'
+      : `站位 ${this.seatLabel(p, me)} 号（以你为 1 号）`;
+    avWrap.appendChild(seatEl);
 
     // 身份
     const idBadge = el('div', 'sgs-identity-badge');
@@ -575,6 +629,11 @@ export class UI {
     const grp = GROUPS[me.group];
     const nameEl = $('#sgs-self-name');
     nameEl.innerHTML = '';
+    // 座位号（自己固定为 1）
+    const seatSelf = el('span', 'grp', '1 号位');
+    seatSelf.style.background = IDENTITY_COLOR[me.identity] || '#3d8b6e';
+    seatSelf.style.opacity = '0.9';
+    nameEl.appendChild(seatSelf);
     nameEl.appendChild(document.createTextNode(me.name));
     const gb = el('span', 'grp', grp.label);
     gb.style.background = grp.color;

@@ -133,6 +133,29 @@ html, body {
 .sgs-btn:active:not(:disabled) { transform: translateY(0); }
 .sgs-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* 开屏底部按钮行 */
+.sgs-btn-row {
+  display: flex; gap: 12px; justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* 次级（幽灵）按钮：返回主站 */
+.sgs-btn-ghost {
+  background: transparent;
+  color: var(--gold-light);
+  border: 1px solid rgba(212, 160, 23, 0.5);
+  box-shadow: none;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sgs-btn-ghost:hover {
+  background: rgba(212, 160, 23, 0.16);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(212, 160, 23, 0.25);
+}
+
 /* ==========================================================================
    牌桌
    ========================================================================== */
@@ -172,6 +195,21 @@ html, body {
   transition: background 0.15s;
 }
 .sgs-icon-btn:hover { background: rgba(245, 239, 228, 0.16); color: #fff; }
+
+/* 「返回主站」按钮 */
+.sgs-home-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: rgba(212, 160, 23, 0.45);
+  color: var(--gold-light);
+  background: rgba(212, 160, 23, 0.12);
+}
+.sgs-home-btn:hover {
+  background: rgba(212, 160, 23, 0.28);
+  color: #fff;
+}
 
 /* 座位区 */
 .sgs-board {
@@ -249,7 +287,7 @@ html, body {
   font-size: 12px; color: #9a8b78; font-family: sans-serif;
 }
 
-/* 势力角标 */
+/* 势力角标（左上） */
 .sgs-group-badge {
   position: absolute; top: 3px; left: 3px;
   width: 20px; height: 20px; border-radius: 4px;
@@ -257,6 +295,27 @@ html, body {
   font-size: 12px; font-weight: 700; color: #fff;
   font-family: "KaiTi", "STKaiti", serif;
   box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+/* 座位号角标（势力下方，便于识别行动顺序） */
+.sgs-seat-badge {
+  position: absolute;
+  top: 26px; left: 3px;
+  min-width: 20px; height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  color: #1a1613;
+  background: linear-gradient(180deg, #e8c45a, #d4a017);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 自己座位号固定为 1，用不同色调区分 */
+.sgs-seat-badge.me {
+  background: linear-gradient(180deg, #7fd4a8, #3d8b6e);
+  color: #fff;
 }
 
 /* 身份角标 */

@@ -866,7 +866,10 @@ export class Game {
       this.io = io || this.io;
       this.ai = ai || this.ai;
     }
-    await this.io.showSplash();
+    // 注意：开屏由入口（main.js）负责，引擎不再调用 showSplash。
+    // 早期版本在此处 await showSplash()，但那时开屏已被入口关闭，
+    // 导致 showSplash 返回的 Promise 永远不 resolve —— 表现为
+    // 「选完武将后所有人没有手牌、界面毫无响应」。已移除。
     this.log('=== 游戏开始 ===');
 
     // 初始手牌
