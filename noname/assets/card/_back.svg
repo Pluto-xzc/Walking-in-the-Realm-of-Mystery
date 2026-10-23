@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="186" height="264" viewBox="0 0 186 264">
+  <defs>
+    <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6b4a2f"/>
+      <stop offset="50%" stop-color="#553a24"/>
+      <stop offset="100%" stop-color="#422c1a"/>
+    </linearGradient>
+    <pattern id="weave" width="12" height="12" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(45)">
+      <rect width="12" height="12" fill="none"/>
+      <path d="M0 0 L12 0" stroke="#000" stroke-opacity="0.14" stroke-width="5"/>
+    </pattern>
+  </defs>
+
+  <rect x="0" y="0" width="186" height="264" rx="12" fill="url(#wood)"/>
+  <rect x="0" y="0" width="186" height="264" rx="12" fill="url(#weave)"/>
+  <rect x="4" y="4" width="178" height="256" rx="9"
+        fill="none" stroke="#d4a017" stroke-width="2" stroke-opacity="0.65"/>
+  <rect x="10" y="10" width="166" height="244" rx="6"
+        fill="none" stroke="#d4a017" stroke-width="0.7" stroke-opacity="0.35"/>
+
+  <!-- 中央纹章 -->
+  <circle cx="93" cy="132" r="52" fill="none"
+          stroke="#d4a017" stroke-width="1.6" stroke-opacity="0.55"/>
+  <circle cx="93" cy="132" r="44" fill="none"
+          stroke="#d4a017" stroke-width="0.8" stroke-opacity="0.35"/>
+
+  <text x="93" y="152" text-anchor="middle"
+        font-family="KaiTi, STKaiti, 'Kaiti SC', serif" font-size="62"
+        font-weight="700" fill="#e8c45a" fill-opacity="0.82">谜</text>
+</svg>
