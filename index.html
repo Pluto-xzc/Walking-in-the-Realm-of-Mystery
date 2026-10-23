@@ -422,6 +422,66 @@
       overflow: hidden;
     }
 
+    /* ===== 侧边栏左上角「单机三国杀」入口图标 ===== */
+    /* 让标题行成为定位容器，图标绝对定位贴左，不参与标题居中计算 */
+    .sidebar > h1.app-name {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 12px;
+    }
+
+    #sgs-entry {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      font-size: 18px;
+      line-height: 1;
+      border-radius: 8px;
+      text-decoration: none;
+      cursor: pointer;
+      background: rgba(66, 185, 131, 0.1);
+      border: 1px solid rgba(66, 185, 131, 0.35);
+      transition: transform 0.18s ease, background 0.18s ease,
+                  box-shadow 0.18s ease, border-color 0.18s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #sgs-entry:hover {
+      transform: translateY(-50%) scale(1.12);
+      background: rgba(66, 185, 131, 0.2);
+      border-color: #42b983;
+      box-shadow: 0 2px 10px rgba(66, 185, 131, 0.35);
+    }
+    #sgs-entry:active {
+      transform: translateY(-50%) scale(0.96);
+    }
+    #sgs-entry:focus-visible {
+      outline: 2px solid #42b983;
+      outline-offset: 2px;
+    }
+    #sgs-entry > span {
+      pointer-events: none;
+    }
+
+    @media screen and (max-width: 400px) {
+      #sgs-entry {
+        left: 6px;
+        width: 26px;
+        height: 26px;
+        font-size: 15px;
+      }
+      .sidebar > h1.app-name {
+        padding: 0 6px;
+      }
+    }
+
     @media screen and (max-width: 540px) {
       .gallery {
         max-width: 100%;
@@ -528,6 +588,28 @@
             return content;
           });
 
+          // 插入「单机三国杀」入口图标（幂等，重复调用不会重复插入）
+          function injectSgsEntry() {
+            var appName = document.querySelector('.sidebar > h1.app-name');
+            if (!appName) return;
+            if (document.getElementById('sgs-entry')) return;
+
+            var entry = document.createElement('a');
+            entry.id = 'sgs-entry';
+            entry.href = '/noname/';
+            entry.title = '单机三国杀';
+            entry.setAttribute('aria-label', '进入单机三国杀');
+            entry.setAttribute('role', 'button');
+            entry.innerHTML = '<span aria-hidden="true">\uD83C\uDFAE</span>';
+
+            // 阻止冒泡：避免被上方 app-name-link 的拦截逻辑干扰
+            entry.addEventListener('click', function(e) {
+              e.stopPropagation();
+            });
+
+            appName.insertBefore(entry, appName.firstChild);
+          }
+
           hook.doneEach(function() {
             var appNameLink = document.querySelector('.app-name-link');
             if (appNameLink) {
@@ -536,6 +618,7 @@
                 return false;
               };
             }
+            injectSgsEntry();
             setTimeout(initGalleries, 80);
             setTimeout(function() {
               window.dispatchEvent(new Event('resize'));
