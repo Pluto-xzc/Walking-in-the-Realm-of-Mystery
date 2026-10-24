@@ -17,8 +17,9 @@
   --text: #2b241d;
   --text-light: #f5efe4;
   --border: #5a4c3c;
-  --card-w: 62px;
-  --card-h: 88px;
+  /* 卡牌尺寸：手牌区高度直接影响整块底部区域的高度，故压得较紧凑 */
+  --card-w: 56px;
+  --card-h: 76px;
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
@@ -1072,6 +1073,37 @@ html, body {
   display: flex; align-items: center; gap: 12px;
 }
 
+/* 自己区域的信息块：名字行 / 体力行 / 技能按钮 */
+.sgs-self-info {
+  display: flex; flex-direction: column; gap: 5px;
+  min-width: 0;
+}
+.sgs-self-name-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.sgs-self-stat { display: flex; align-items: center; }
+
+/* 结束回合按钮所在行（武将信息下方、手牌上方） */
+.sgs-endturn-row {
+  display: flex; justify-content: flex-start;
+  padding: 0 2px;
+  min-height: 0;
+}
+.sgs-endturn-row:empty { display: none; }
+.sgs-endturn-btn {
+  padding: 7px 26px;
+  font-size: 14px;
+  letter-spacing: 2px;
+  background: linear-gradient(180deg, rgba(176,58,58,0.5), rgba(140,40,40,0.3));
+  border-color: rgba(220, 120, 100, 0.6);
+  color: #ffe0d8;
+}
+.sgs-endturn-btn:hover {
+  background: linear-gradient(180deg, rgba(210,80,70,0.7), rgba(160,50,45,0.45));
+  color: #fff;
+  box-shadow: 0 3px 14px rgba(200,80,70,0.5);
+}
+
 .sgs-self-avatar {
   position: relative;
   width: 54px; height: 72px;
@@ -1105,12 +1137,214 @@ html, body {
 .sgs-self-hand {
   display: flex; gap: 6px;
   overflow-x: auto; overflow-y: visible;
-  padding: 14px 4px 6px;
-  min-height: calc(var(--card-h) + 20px);
+  /* 顶部留出 hover 抬起 + 选中描边的空间，底部压紧 */
+  padding: 12px 4px 2px;
+  min-height: calc(var(--card-h) + 14px);
   scrollbar-width: thin;
 }
 .sgs-self-hand::-webkit-scrollbar { height: 6px; }
 .sgs-self-hand::-webkit-scrollbar-thumb { background: rgba(212,160,23,0.3); border-radius: 3px; }
+
+/* ==========================================================================
+   选中高亮（选牌时让玩家分辨选了哪张）
+   ========================================================================== */
+.sgs-card.selected {
+  outline: 3px solid var(--gold-light);
+  outline-offset: 1px;
+  transform: translateY(-10px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.6),
+              0 0 18px rgba(232,196,90,0.85) !important;
+  z-index: 20;
+}
+/* 选中角标 */
+.sgs-card.selected::after {
+  content: '✓';
+  position: absolute;
+  top: -6px; right: -6px;
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  color: #1a1613;
+  background: var(--gold-light);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  z-index: 2;
+}
+
+/* ==========================================================================
+   属性杀标识（火杀 / 雷杀）
+   ========================================================================== */
+.sgs-card .card-nature {
+  position: absolute;
+  top: 2px; right: 2px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 700;
+  z-index: 2;
+}
+.sgs-card.nature-fire .card-nature {
+  background: linear-gradient(180deg, #ff8a3d, #d63b1f);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(255,110,40,0.85);
+}
+.sgs-card.nature-thunder .card-nature {
+  background: linear-gradient(180deg, #8f7bff, #4a2fd6);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(130,100,255,0.85);
+}
+/* 属性杀整体加一层色调，扫一眼就能区分 */
+.sgs-card.nature-fire { box-shadow: 0 0 0 2px rgba(214,59,31,0.75), 0 2px 6px rgba(0,0,0,0.4); }
+.sgs-card.nature-thunder { box-shadow: 0 0 0 2px rgba(74,47,214,0.75), 0 2px 6px rgba(0,0,0,0.4); }
+
+/* ==========================================================================
+   体力 / 护甲 文字化显示
+   ========================================================================== */
+.sgs-hp-text {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: rgba(245, 239, 228, 0.08);
+  border: 1px solid rgba(212, 160, 23, 0.28);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+.sgs-hp-text .hp-part { color: #8fd6a8; }
+.sgs-hp-text .hp-part.low { color: #e06c5a; }
+.sgs-hp-text .armor-part { color: #7fc4e8; }
+.sgs-hp-text .armor-part.zero { color: #6b6255; }
+.sgs-hp-text .sep { color: #6b6255; }
+
+/* ==========================================================================
+   技能按钮（可点击发动）
+   ========================================================================== */
+.sgs-skill-btns {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  margin-left: 4px;
+}
+.sgs-skill-btn {
+  padding: 4px 13px;
+  font-size: 13px;
+  font-family: "KaiTi", "STKaiti", serif;
+  letter-spacing: 1px;
+  border-radius: 6px;
+  border: 1px solid rgba(212, 160, 23, 0.55);
+  background: linear-gradient(180deg, rgba(212,160,23,0.24), rgba(212,160,23,0.10));
+  color: var(--gold-light);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.sgs-skill-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(232,196,90,0.45), rgba(212,160,23,0.22));
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(212,160,23,0.4);
+}
+.sgs-skill-btn:disabled {
+  opacity: 0.34; cursor: not-allowed;
+  border-color: rgba(138,125,107,0.4);
+}
+.sgs-skill-btn.locked {
+  border-color: rgba(176, 58, 58, 0.5);
+  background: linear-gradient(180deg, rgba(176,58,58,0.26), rgba(176,58,58,0.10));
+  color: #e8a89a;
+}
+.sgs-skill-btn.usable {
+  box-shadow: 0 0 12px rgba(232,196,90,0.5);
+  border-color: var(--gold-light);
+}
+
+/* 不可用技能仍要看得到（灰态），但不能点 */
+.sgs-skill-btn.trigger-hint { opacity: 0.55; cursor: help; }
+
+/* ==========================================================================
+   自己区域的接续信息（判定牌 / 横置 / token）
+   ========================================================================== */
+.sgs-self-extras {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 2px 4px 0;
+  min-height: 0;
+}
+.sgs-self-judges {
+  display: flex; align-items: center; gap: 5px;
+}
+.sgs-self-judges .sgs-judge-label {
+  font-size: 11px; color: #cbbfa8; letter-spacing: 1px;
+}
+.sgs-self-judges .sgs-card {
+  transform: scale(0.72);
+  transform-origin: left center;
+  margin-right: -14px;
+}
+.sgs-self-chain {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  background: linear-gradient(90deg, rgba(120,120,130,0.4), rgba(180,180,195,0.28));
+  border: 1px solid rgba(200,200,215,0.6);
+  color: #e8e8f0;
+}
+.sgs-self-tokens {
+  display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap;
+}
+.sgs-token {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  background: rgba(212, 160, 23, 0.18);
+  border: 1px solid rgba(212, 160, 23, 0.5);
+  color: var(--gold-light);
+  cursor: help;
+}
+.sgs-token.danger {
+  background: rgba(176, 58, 58, 0.2);
+  border-color: rgba(176, 58, 58, 0.55);
+  color: #e8a89a;
+}
+
+/* ==========================================================================
+   右键详情浮层
+   ========================================================================== */
+.sgs-detail-pop {
+  position: fixed;
+  z-index: 60000;
+  max-width: 320px;
+  padding: 12px 14px;
+  background: rgba(18, 14, 11, 0.98);
+  border: 1px solid rgba(212, 160, 23, 0.55);
+  border-radius: 8px;
+  box-shadow: 0 10px 34px rgba(0,0,0,0.8);
+  color: #e8e0d0;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.sgs-detail-pop .dp-title {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 16px;
+  color: var(--gold-light);
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+.sgs-detail-pop .dp-sub {
+  font-size: 11px; color: #9a8b78; margin-bottom: 8px;
+}
+.sgs-detail-pop .dp-desc {
+  color: #d8cfbe;
+  white-space: pre-wrap;
+}
+.sgs-detail-pop .dp-meta {
+  margin-top: 8px; padding-top: 7px;
+  border-top: 1px solid rgba(212,160,23,0.22);
+  font-size: 11px; color: #9a8b78;
+}
+.sgs-detail-pop .dp-hint {
+  margin-top: 7px; font-size: 10.5px; color: #6b6255;
+}
 
 /* ==========================================================================
    操作区
@@ -1212,11 +1446,22 @@ html, body {
 }
 .sgs-char-pick {
   position: relative;
-  border-radius: 8px; overflow: hidden;
+  border-radius: 8px;
+  display: flex; flex-direction: column;
   border: 2px solid var(--border);
-  background: #2b241d;
+  background: linear-gradient(180deg, #332b23, #241e18);
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  min-height: 148px;
+  overflow: hidden;
+}
+/* 左侧一道势力色条，扫一眼能区分势力 */
+.sgs-char-pick::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--grp-color, #7a6a55);
 }
 .sgs-char-pick:hover {
   transform: translateY(-4px);
@@ -1226,6 +1471,7 @@ html, body {
 .sgs-char-pick.selected {
   border-color: var(--gold-light);
   box-shadow: 0 0 0 3px rgba(212, 160, 23, 0.5);
+  background: linear-gradient(180deg, #3d3428, #2a2319);
 }
 .sgs-char-pick .pick-img {
   width: 100%; aspect-ratio: 3/4;
@@ -1243,10 +1489,62 @@ html, body {
   padding: 5px 6px;
   background: rgba(20,16,13,0.9);
 }
+
+/* ---- 新排版：名字 → 技能+描述 → 势力 ---- */
+.sgs-char-pick .pick-name-row {
+  padding: 8px 10px 4px 12px;
+  border-bottom: 1px solid rgba(212, 160, 23, 0.22);
+}
 .sgs-char-pick .pick-name {
-  font-size: 13px; color: #e8dcc6; text-align: center;
-  font-weight: 600; letter-spacing: 1px;
+  font-size: 17px;
+  color: var(--gold-light);
+  font-weight: 700;
+  letter-spacing: 2px;
   font-family: "KaiTi", "STKaiti", serif;
+}
+.sgs-char-pick .pick-skill-list {
+  flex: 1;
+  padding: 6px 10px 6px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+  overflow: hidden;
+}
+.sgs-char-pick .pick-skill-row {
+  border-left: 2px solid rgba(212, 160, 23, 0.3);
+  padding-left: 6px;
+}
+.sgs-char-pick .pick-skill-title {
+  font-size: 12.5px;
+  color: #e0d5c0;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.sgs-char-pick .pick-skill-title.locked { color: #e8a89a; }
+.sgs-char-pick .pick-skill-desc {
+  font-size: 10.5px;
+  color: #8f8272;
+  line-height: 1.5;
+  margin-top: 1px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sgs-char-pick .pick-foot {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px 7px 12px;
+  border-top: 1px solid rgba(212, 160, 23, 0.18);
+}
+.sgs-char-pick .pick-group {
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #fff;
+  border-radius: 3px;
+  font-family: "KaiTi", "STKaiti", serif;
+}
+.sgs-char-pick .pick-hp {
+  font-size: 10.5px;
+  color: #9a8b78;
 }
 .sgs-char-pick .pick-skills {
   font-size: 10px; color: #9a8b78; text-align: center;

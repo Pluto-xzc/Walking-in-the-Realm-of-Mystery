@@ -156,11 +156,28 @@ export const SKILLS = {
         max: Math.min(2, targets.length),
       });
       if (!picked || !picked.length) return false;
+
+      /*
+       * 选牌方式：由**使用者自己**从目标的暗置手牌中点选一张。
+       * ------------------------------------------------------------------
+       * 参考无名杀：
+       *   player.gainMultiple(targets)
+       *     → player.gainPlayerCard(target, 'h', true)
+       *       → 手牌以 blank（背面按钮）形式列出，玩家点选
+       *
+       * 注意：是**玩家选**，不是随机取。
+       * 只是看到的牌是背面（信息隔离），玩家凭判断挑位置。
+       * 历史 bug：早期用 randomPick 随机拿一张，玩家无法选择。
+       */
       for (const t of picked) {
-        const cards = t.getCards('h');
-        if (cards.length) {
-          const c = ctx.game.randomPick(cards);
-          await ctx.player.gain([c], 'gain2');
+        if (!t.countCards('h')) continue;
+        const got = await ctx.player.chooseCardFromPlayer(
+          t, 'h', `突袭：选择获得 ${t.name} 的一张手牌`,
+        );
+        if (got && got.length) {
+          await t.loseCards(got);
+          await ctx.player.gain(got, 'gain2');
+          ctx.game.log(`${ctx.player.name} 发动【突袭】，获得 ${t.name} 的一张手牌`);
         }
       }
       ctx.event.skipDraw = true;
@@ -508,8 +525,22 @@ export const SKILLS = {
         ],
       });
       const cards = ctx.player.getCards('h');
-      const picked = ctx.game.randomPick(cards);
-      await target.gain([picked], 'gain2', ctx.player);
+      /*
+       * 参考无名杀 fanjian.content：
+       *   target.gainPlayerCard({ target: player, position: 'h', forced: true })
+       *
+       * 注意是 **目标自己** 从周瑜的手牌中拿一张 —— 不是随机取。
+       * 目标先声明花色，再从暗置手牌里挑一张（赌花色）。
+       * 历史 bug：早期用 randomPick 随机拿，等于剥夺了目标的赌牌权利。
+       */
+      const picked0 = await target.chooseCardFromPlayer(
+        ctx.player, 'h', '反间：从周瑜的手牌中拿取一张（若花色不符将受到 1 点伤害）',
+      );
+      const picked = (picked0 && picked0[0]) || cards[0];
+      if (!picked) return false;
+      await ctx.player.loseCards([picked]);
+      await target.gain([picked], 'gain2');
+      ctx.game.log(`${target.name} 获得了周瑜的一张手牌`);
       if (picked.suit !== suit) {
         await target.damage(1, ctx.player, 'fanjian');
       }
@@ -818,10 +849,15 @@ export const SKILLS = {
       /**
        * 第一级：增减伤
        * 火焰伤害 +1。
+       *
+       * ⚠️ 必须是**穿着藤甲的人自己受到**的伤害才 +1，
+       * 即 role 必须是 'target'（受伤者）。
+       *
        * 注意：card 可能为 null（如【火攻】用 nature 参数传入属性），
        * 因此必须同时看 ev.card.nature 与 ev.nature。
        */
-      damageModify: (num, ev) => {
+      damageModify: (num, ev, owner, role) => {
+        if (role !== 'target') return num;   // 只有受伤者自己的藤甲生效
         const nat = ev.nature || (ev.card && ev.card.nature);
         return nat === 'fire' ? num + 1 : num;
       },
@@ -899,8 +935,9 @@ export const SKILLS = {
     desc: '你使用【杀】造成伤害时，若目标没有手牌，此伤害 +1。',
     type: 'mod', locked: true, equip: true,
     mod: {
-      /** 第一级：增减伤 */
-      damageModify: (num, ev) => {
+      /** 第一级：增减伤（必须是**使用者的**古锭刀，故 role 为 source） */
+      damageModify: (num, ev, owner, role) => {
+        if (role !== 'source') return num;   // 只有出杀者自己装备的古锭刀生效
         if (!ev.card || ev.card.name !== 'sha') return num;
         if (ev.player && ev.player.countCards('h') === 0) return num + 1;
         return num;
@@ -924,6 +961,10 @@ export const SKILLS = {
        *
        * 效果：最终伤害 > 1 时，只受 1 点。
        *
+       * ⚠️ 归属限制（由引擎的 applyFinalDamage 保证）：
+       * 只有 **role === 'target'**（受伤者自己）的技能才会执行到这一级。
+       * 所以「自己穿白银狮子去打别人」不会误触发。
+       *
        * 为什么必须最后：
        *   设基础伤害 1，对方有【酒】+1、【藤甲】火焰+1，合计 3。
        *   若白银狮子提前执行（看到 1，不触发），最终仍是 3 点 —— 错误。
@@ -933,7 +974,8 @@ export const SKILLS = {
        *   number  → 采纳这个新数值
        *   undefined → 不做修改
        */
-      finalDamage: (num, ev, owner) => {
+      finalDamage: (num, ev, owner, role) => {
+        if (role !== 'target') return undefined;  // 双保险：只保护穿它的人
         if (num > 1) return 1;
         return undefined;
       },

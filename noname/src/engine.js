@@ -98,6 +98,16 @@ export class Card {
      * ------------------------------------------------------------------ */
     this.revealed = false;    // 是否处于明置状态
     this.revealOwner = null;  // 明置时的归属者（换手即失去明置）
+
+    /**
+     * 属性（null / 'fire' / 'thunder'）
+     * ------------------------------------------------------------------
+     * 用于属性伤害与界面标识。
+     * 【朱雀羽扇】会把普通【杀】转成火【杀】：那时会把此字段设为 'fire'，
+     * 界面据此显示「火」角标（见 ui.buildCardNode）。
+     * 若不设置，则回退到卡牌定义里的 nature（目前只有【火攻】）。
+     */
+    this.nature = null;
   }
 
   /**
@@ -196,6 +206,22 @@ export class Player {
      */
     this.disabledEquips = [];
     this.judges = [];
+
+    /**
+     * 护甲值（参考无名杀 hujia）
+     * ------------------------------------------------------------------
+     * 无名杀规则原文：「和体力类似，每点护甲可抵挡1点伤害，但不影响手牌上限。」
+     *
+     * 结算位置：在伤害数值全部修改完成之后、扣体力之前。
+     *   抵挡量 = min(最终伤害, 当前护甲)
+     *   护甲 -= 抵挡量；实际扣血 = 伤害 - 抵挡量
+     *   日志：「XX 的护甲抵挡了 N 点伤害」
+     *
+     * 与白银狮子的区别：白银狮子改的是**伤害数值**（第三级），
+     * 护甲是在数值确定后**抵扣**，属于更靠后的一步。
+     */
+    this.hujia = 0;
+    this.maxHujia = 0;        // 上限（多数情况等于初始护甲）
 
     this.flags = {};          // 回合内标记
     this.storage = {};        // 持久数据
@@ -372,6 +398,74 @@ export class Player {
     this.hp = Math.min(this.maxHp, this.hp + num);
     if (this.hp > before) this.game.log(`${this.name} 回复了 ${this.hp - before} 点体力（${this.hp}/${this.maxHp}）`);
     this.game.emit();
+  }
+
+  /**
+   * 调整护甲值（参考无名杀 changeHujia）
+   * ------------------------------------------------------------------
+   * @param {number} num   变化量（正数获得，负数失去）
+   * @param {string} type  'gain' | 'lose' | 'damage' | 'null'
+   * @param {number|true} limit 上限；传 true 表示上限 5
+   *
+   * 无名杀原文：
+   *   changeHujia(num, type, limit) {
+   *     if (limit === true) limit = 5;
+   *     if (typeof limit == 'number' && this.hujia + num > limit)
+   *       num = Math.max(0, limit - this.hujia);
+   *     ...
+   *   }
+   */
+  async changeHujia(num = 1, type = null, limit = null) {
+    if (!this.alive) return 0;
+    let n = num;
+    if (limit === true) limit = 5;
+    if (typeof limit === 'number' && this.hujia + n > limit) {
+      n = Math.max(0, limit - this.hujia);
+    }
+    if (!type) {
+      if (n > 0) type = 'gain';
+      else if (n < 0) type = 'lose';
+      else type = 'null';
+    }
+    // 失去时不能超过当前护甲
+    if (n < 0 && -n > this.hujia) {
+      n = -this.hujia;
+      type = 'damage';
+    }
+    if (n > 0) {
+      this.game.log(`${this.name} 获得了 ${n} 点护甲（${this.hujia} → ${this.hujia + n}）`);
+    } else if (n < 0) {
+      if (type === 'damage') {
+        this.game.log(`${this.name} 的护甲抵挡了 ${-n} 点伤害`);
+      } else {
+        this.game.log(`${this.name} 失去了 ${-n} 点护甲`);
+      }
+    }
+    this.hujia += n;
+    this.maxHujia = Math.max(this.maxHujia, this.hujia);
+    this.game.emit();
+    return n;
+  }
+
+  /**
+   * 重铸（参考无名杀 recast）
+   * ------------------------------------------------------------------
+   * 规则：把选定的牌置入弃牌堆，然后摸等量的牌。
+   *
+   * 无名杀实现要点：
+   *   recast(cards) → loseToDiscardpile(cards) → draw(cards.length)
+   *   日志格式：「XX 重铸了 ...」
+   *
+   * 目前【铁索连环】带有 recastable 标记，可以通过重铸来换取新牌。
+   */
+  async recast(cards) {
+    const list = (Array.isArray(cards) ? cards : [cards]).filter(Boolean);
+    if (!list.length) return;
+    this.game.log(`${this.name} 重铸了 ${list.map((c) => c.text).join('、')}`);
+    await this.loseCards(list);
+    this.game.toDiscard(...list);
+    this.game.emit();
+    await this.draw(list.length);
   }
 
   async loseHp(num) {
@@ -1184,9 +1278,37 @@ export class Game {
       }
     }
 
-    target.hp -= ev.num;
+    /* ============================================================
+     * 护甲抵扣（参考无名杀 hujia）
+     * ============================================================
+     * 位置：在伤害数值全部修改完成之后、扣体力之前。
+     *
+     * 无名杀规则原文：「和体力类似，每点护甲可抵挡1点伤害，
+     * 但不影响手牌上限。」
+     *
+     * 抵挡量 = min(最终伤害, 当前护甲)
+     * 护甲 -= 抵挡量；实际扣血 = 伤害 - 抵挡量
+     *
+     * 与白银狮子的区别：白银狮子改的是伤害**数值**（第三级管线），
+     * 护甲是在数值确定之后做的**抵扣**，属于更靠后的一步。
+     * 所以「护甲 3 挨 5 点伤害」= 护甲挡住 3 点，实际掉 2 点体力。
+     * ============================================================ */
+    let hpLoss = ev.num;
+    if (target.hujia > 0 && ev.num > 0 && !target.hasSkill('nohujia')) {
+      const blocked = Math.min(ev.num, target.hujia);
+      target.hujia -= blocked;
+      hpLoss = ev.num - blocked;
+      ev.hujiaBlocked = blocked;      // 供后续技能读取
+      this.log(`${target.name} 的护甲抵挡了 ${blocked} 点伤害（剩余护甲 ${target.hujia}）`);
+    }
+
+    target.hp -= hpLoss;
     const natureText = dmgNature === 'fire' ? '火焰' : dmgNature === 'thunder' ? '雷电' : '';
-    this.log(`${target.name} 受到 ${ev.num} 点${natureText}伤害（${target.hp}/${target.maxHp}）${source ? `，来源：${source.name}` : ''}`);
+    if (hpLoss > 0) {
+      this.log(`${target.name} 受到 ${hpLoss} 点${natureText}伤害（${target.hp}/${target.maxHp}）${source ? `，来源：${source.name}` : ''}`);
+    } else {
+      this.log(`${target.name} 的护甲完全抵挡了这次伤害`);
+    }
     this.emit();
 
     await this.checkSkills('damageEnd', ev);
@@ -1227,28 +1349,42 @@ export class Game {
    */
   collectDamageSkills(target, source) {
     const out = [];
-    const push = (owner, sk) => {
-      if (sk && sk.mod) out.push({ skill: sk, owner });
+    /**
+     * 收集时**必须记录归属关系**，因为不同级别的技能作用对象不同：
+     *   - 受伤者的技能 → 影响「他受到的伤害」
+     *   - 来源的技能   → 影响「他造成的伤害」
+     *
+     * 历史坑：早期版本只 push({skill, owner}) 不区分角色，
+     * 导致「自己装着白银狮子去打别人」时，白银狮子错误地
+     * 把**别人**受到的伤害压成了 1。
+     *
+     * role 取值：
+     *   'target' 受伤者（装备技 + 武将技）
+     *   'source' 伤害来源（装备技 + 武将技）
+     *   'global' 全场其他角色（光环类）
+     */
+    const push = (owner, sk, role) => {
+      if (sk && sk.mod) out.push({ skill: sk, owner, role });
     };
-    // 受伤者的装备技能
+
+    // 受伤者的装备技能 + 武将技能
     if (target) {
       for (const c of Object.values(target.equips).filter(Boolean)) {
         const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
-        if (esid) push(target, SKILLS[esid]);
+        if (esid) push(target, SKILLS[esid], 'target');
       }
+      for (const sid of target.skills) push(target, SKILLS[sid], 'target');
     }
-    // 受伤者的武将技能
-    if (target) {
-      for (const sid of target.skills) push(target, SKILLS[sid]);
-    }
-    // 伤害来源的技能
+
+    // 伤害来源的装备技能 + 武将技能
     if (source && source !== target) {
       for (const c of Object.values(source.equips).filter(Boolean)) {
         const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
-        if (esid) push(source, SKILLS[esid]);
+        if (esid) push(source, SKILLS[esid], 'source');
       }
-      for (const sid of source.skills) push(source, SKILLS[sid]);
+      for (const sid of source.skills) push(source, SKILLS[sid], 'source');
     }
+
     // 全场其他角色（光环类增减伤）
     for (const p of this.players) {
       if (p === target || p === source || !p.alive) continue;
@@ -1256,7 +1392,7 @@ export class Game {
         const sk = SKILLS[sid];
         if (sk && sk.mod && (sk.mod.damageModify || sk.mod.finalDamage
           || sk.mod.finalDamageModify)) {
-          push(p, sk);
+          push(p, sk, 'global');
         }
       }
     }
@@ -1272,13 +1408,15 @@ export class Game {
     const target = ev.player;
     const source = ev.source;
 
-    for (const { skill, owner } of this.collectDamageSkills(target, source)) {
+    // 只有「受伤者」和「来源」的技能能改这次伤害的数值；
+    // 全场光环类也允许，但它们必须自己判断是否该生效。
+    for (const { skill, owner, role } of this.collectDamageSkills(target, source)) {
       const mod = skill.mod;
 
-      // 新写法（推荐）
+      // 新写法（推荐）—— 把所有者的角色信息一并传入，技能可自行判断
       if (typeof mod.damageModify === 'function') {
         try {
-          const r = mod.damageModify(ev.num, ev, owner);
+          const r = mod.damageModify(ev.num, ev, owner, role);
           if (typeof r === 'number') {
             if (r !== ev.num) {
               this.log(`【${skill.name}】使伤害 ${ev.num} → ${r}`);
@@ -1288,8 +1426,8 @@ export class Game {
         } catch (e) { this._warnMod(skill, e); }
       }
 
-      // 兼容旧写法：受伤者装备的 damageTaken
-      if (owner === target && typeof mod.damageTaken === 'function') {
+      // 兼容旧写法：受伤者装备的 damageTaken（只在 owner 是受伤者时执行）
+      if (role === 'target' && typeof mod.damageTaken === 'function') {
         try {
           const r = mod.damageTaken(ev.num, ev.card, ev.nature);
           if (typeof r === 'number' && r !== ev.num) {
@@ -1299,8 +1437,8 @@ export class Game {
         } catch (e) { this._warnMod(skill, e); }
       }
 
-      // 兼容旧写法：来源的 damageFromSha
-      if (owner === source && typeof mod.damageFromSha === 'function'
+      // 兼容旧写法：来源的 damageFromSha（只在 owner 是来源时执行）
+      if (role === 'source' && typeof mod.damageFromSha === 'function'
         && ev.card && ev.card.name === 'sha') {
         try {
           const r = mod.damageFromSha(ev.num, ev.card, target);
@@ -1333,13 +1471,15 @@ export class Game {
    * 用于「把伤害整体改为 X」这类效果
    */
   async applyFinalDamageModify(ev) {
-    for (const { skill, owner } of this.collectDamageSkills(ev.player, ev.source)) {
+    for (const { skill, owner, role } of this.collectDamageSkills(ev.player, ev.source)) {
       const mod = skill.mod;
       if (typeof mod.finalDamageModify !== 'function') continue;
+      // 最终修改也是「影响这次伤害」的效果，同样只允许
+      // 受伤者 / 来源 / 光环 三类参与（role 信息传给技能自行判断）
       try {
-        const r = mod.finalDamageModify(ev.num, ev, owner);
+        const r = mod.finalDamageModify(ev.num, ev, owner, role);
         if (typeof r === 'number' && r !== ev.num) {
-          this.log(`【${skill.name}】（最终修改）使伤害 ${ev.num} → ${r}`);
+          this.log(`【${skill.name}】使伤害 ${ev.num} → ${r}`);
           ev.num = r;
         }
       } catch (e) { this._warnMod(skill, e); }
@@ -1347,25 +1487,34 @@ export class Game {
   }
 
   /**
-   * 第三级：特殊裁定
+   * 第三级：特殊裁定（白银狮子）
    * ------------------------------------------------------------------
    * 处理 mod.finalDamage(num, ev, owner) —— 永远最后执行。
    *
-   * 白银狮子属于这一类：它不参与增减伤的计算，而是在所有修改
-   * 尘埃落定之后，判断「最终伤害是否 > 1」，是则减为 1。
+   * ⚠️ 关键归属限制：**只有受伤者自己的技能才能在这一级生效**。
+   *
+   * 白银狮子的规则是「**你**受到的伤害若大于 1，防止多余伤害」——
+   * 它保护的是**穿着它的人**。所以：
+   *   自己穿白银狮子去打别人 → **不触发**（别人不掉血才对）
+   *   别人穿白银狮子被打     → 触发（压在别人身上）
+   *
+   * 历史 bug：早期版本把来源的技能也一起执行，导致
+   * 「自己装着白银狮子打别人，别人的伤害被压成 1」。
    *
    * 这样设计的原因：无论对方用什么手段增伤（酒、藤甲、古锭刀、
    * 未来武将的增伤技），只要最终落到白银狮子身上，都会被压到 1。
    */
   async applyFinalDamage(ev) {
-    for (const { skill, owner } of this.collectDamageSkills(ev.player, ev.source)) {
+    for (const { skill, owner, role } of this.collectDamageSkills(ev.player, ev.source)) {
+      // ⚠️ 只处理「受伤者自己」的技能，来源/光环一律跳过
+      if (role !== 'target') continue;
       const mod = skill.mod;
       if (typeof mod.finalDamage !== 'function') continue;
       try {
         const before = ev.num;
-        const r = mod.finalDamage(ev.num, ev, owner);
+        const r = mod.finalDamage(ev.num, ev, owner, role);
         if (typeof r === 'number' && r !== before) {
-          this.log(`【${skill.name}】（特殊裁定）使伤害 ${before} → ${r}`);
+          this.log(`${owner.name} 的【${skill.name}】使伤害 ${before} → ${r}`);
           ev.num = r;
         }
       } catch (e) { this._warnMod(skill, e); }
@@ -1672,6 +1821,35 @@ export class Game {
       card.zone = ZONE.FLYING;
       this.emit();
 
+      /* ============================================================
+       * 判定**之前**先询问【无懈可击】
+       * ============================================================
+       * 参考无名杀 content.js executeDelayCardEffect：
+       *   event.cancelled = false;
+       *   await event.trigger('executeDelayCardEffect');   ← 无懈在此询问
+       *   if (event.cancelled || event.nojudge) return;    ← 被抵消就跳过判定
+       *
+       * 被无懈后的处理按牌种区分：
+       *   【闪电】     → 不判定，**直接移动到下家**（保留在场上）
+       *   【乐不思蜀】 → 无效，**进入弃牌堆**
+       *   【兵粮寸断】 → 无效，**进入弃牌堆**
+       * ============================================================ */
+      const cancelled = await this.askWuxieForJudge(player, card);
+      if (cancelled) {
+        this.log(`【${card.fullname}】被【无懈可击】抵消`);
+        if (card.name === 'shandian') {
+          // 闪电：不判定，直接传给下家
+          await this.moveShandianToNext(player, card);
+        } else {
+          // 其他延时锦囊：无效并进入弃牌堆
+          this.toDiscard(card);
+          card.zone = ZONE.DISCARD;
+          this.log(`【${card.fullname}】无效并进入弃牌堆`);
+        }
+        this.emit();
+        continue;
+      }
+
       if (card.name === 'lebu') {
         const j = await player.judge('lebu');
         if (j.suit !== 'heart') {
@@ -1695,21 +1873,51 @@ export class Game {
           await player.damage(3, null, 'shandian', null);
           if (!player.alive) return;
         } else {
-          // 移动到下家
-          const alive = this.players.filter((p) => p.alive);
-          const i = alive.indexOf(player);
-          const next = alive[(i + 1) % alive.length];
-          if (next && next !== player) {
-            card.zone = 'judge';
-            next.judges.push(card);
-            this.log(`【闪电】移动到 ${next.name} 的判定区`);
-          } else {
-            this.toDiscard(card); card.zone = 'discard';
-          }
+          await this.moveShandianToNext(player, card);
         }
       }
       this.emit();
     }
+  }
+
+  /**
+   * 【闪电】移动到下家的判定区
+   * 被无懈抵消时也会走这里（不判定，直接传下去）。
+   */
+  async moveShandianToNext(player, card) {
+    const alive = this.players.filter((p) => p.alive);
+    const i = alive.indexOf(player);
+    const next = alive[(i + 1) % alive.length];
+    if (next && next !== player) {
+      card.zone = ZONE.JUDGE;
+      next.judges.push(card);
+      this.log(`【闪电】移动到 ${next.name} 的判定区`);
+    } else {
+      this.toDiscard(card);
+      card.zone = ZONE.DISCARD;
+    }
+  }
+
+  /**
+   * 判定阶段询问【无懈可击】
+   * ------------------------------------------------------------------
+   * @returns {boolean} true 表示被无懈抵消（不应进行判定）
+   *
+   * 与锦囊牌的无懈询问复用同一套逻辑（checkWuxie），
+   * 但目标是**判定区的这张延时锦囊**。
+   */
+  async askWuxieForJudge(player, judgeCard) {
+    // 场上无人持有无懈 → 直接跳过，避免无谓的询问
+    const holders = this.players.filter(
+      (p) => p.alive && p.getCards('h', (c) => c.name === 'wuxie').length > 0,
+    );
+    if (!holders.length) return false;
+
+    // 借用锦囊的无懈流程：把「判定区的牌」当作无懈的目标牌
+    const result = await this.checkWuxie(
+      judgeCard, player, [player],
+    );
+    return !!result;
   }
 
   async phaseDraw(player) {
@@ -2289,18 +2497,32 @@ export class Game {
     if (!cards.length) return;
     const picked = await player.chooseCardFromPlayer(target, 'hej', `顺手牵羊：获得 ${target.name} 的一张牌`);
     if (picked && picked.length) {
-      await target.loseCards(picked);
-      // 装备转手需重新装备
       const c = picked[0];
+      await target.loseCards(picked);
+      // 按无名杀规则：获得的牌一律进入**手牌**，即使是装备牌也不自动装备。
+      // 参考 noname card/standard.js shunshou → player.gainPlayerCard() → gain()
+      await player.gain(picked, 'gain2');
       if (c.type === 'equip') {
-        await this.equipCard(player, c);
+        this.log(`${player.name} 获得了 ${target.name} 的【${c.fullname}】（进入手牌）`);
       } else {
-        await player.gain(picked, 'gain2');
+        this.log(`${player.name} 获得了 ${target.name} 的 ${c.text}`);
       }
-      this.log(`${player.name} 获得了 ${target.name} 的 ${c.text}`);
     }
   }
 
+  /**
+   * 【五谷丰登】
+   * ------------------------------------------------------------------
+   * 严格对照无名杀 card/standard.js 的 wugu：
+   *
+   *   ① 从牌堆顶亮出 **存活角色数** 张牌（所有人可见）
+   *   ② 从**使用者开始**，按座位顺序每人依次选一张
+   *   ③ 只剩 1 张时直接获得（无名杀：buttons.length > 1 才询问）
+   *   ④ 结算完毕后，未被选走的牌进入弃牌堆
+   *
+   * 历史 bug：选牌顺序用了 players 数组的原始顺序，
+   * 没有从使用者开始 —— 应该是「从自己开始顺时针」。
+   */
   async resolveWugu(player) {
     const alive = this.players.filter((p) => p.alive);
     const pool = [];
@@ -2308,29 +2530,56 @@ export class Game {
       const c = this.takeFromDeckTop(1)[0];
       if (c) pool.push(c);
     }
+    if (!pool.length) return;
+    this.log(`【五谷丰登】亮出 ${pool.map((c) => c.text).join('、')}`);
+
+    // ② 从使用者开始，按座位顺序
+    const order = this.orderFrom(player, alive);
+
     const taken = new Set();
-    for (const p of alive) {
+    for (const p of order) {
+      if (!p.alive) continue;
       const avail = pool.filter((c) => !taken.has(c));
       if (!avail.length) break;
+
       let pick;
-      if (p.isHuman && p === player) {
+      if (avail.length === 1) {
+        // 只剩一张 → 直接获得，不询问（对应无名杀 buttons.length > 1 判断）
+        pick = avail[0];
+      } else if (p.isHuman) {
         const picked = await this.io.chooseCards(p, {
-          prompt: '五谷丰登：选择一张牌', position: 'list', min: 1, max: 1,
+          prompt: '五谷丰登：选择一张牌',
+          position: 'list', min: 1, max: 1,
           cardList: avail, cancelable: false,
         });
-        pick = picked && picked[0];
-      } else if (p.isHuman) {
-        // 其他玩家（单机时不应该出现）
-        pick = avail[0];
+        pick = (picked && picked[0]) || avail[0];
       } else {
-        pick = this.ai.pickBestCard(avail);
+        pick = this.ai.pickBestCard(avail) || avail[0];
       }
-      if (!pick) pick = avail[0];
+
       taken.add(pick);
       await p.gain([pick], 'gain2');
+      this.log(`${p.name} 从【五谷丰登】中取走了 ${pick.text}`);
     }
-    for (const c of pool) if (!taken.has(c)) { c.zone = 'discard'; this.toDiscard(c); }
+
+    // ④ 剩余的牌进弃牌堆
+    for (const c of pool) {
+      if (!taken.has(c)) { c.zone = ZONE.DISCARD; this.toDiscard(c); }
+    }
     this.emit();
+  }
+
+  /**
+   * 从指定角色开始、按座位顺序排列的角色列表
+   * 用于【五谷丰登】等「从使用者开始依次结算」的效果。
+   */
+  orderFrom(start, list = null) {
+    const all = (list || this.players).filter((p) => p.alive);
+    if (!all.length) return [];
+    const sorted = all.slice().sort((a, b) => a.seat - b.seat);
+    const i = sorted.indexOf(start);
+    if (i < 0) return sorted;
+    return [...sorted.slice(i), ...sorted.slice(0, i)];
   }
 
   async resolveTaoyuan(player) {
@@ -2391,6 +2640,23 @@ export class Game {
    *   ② 你可以弃置一张与其花色相同的手牌
    *   ③ 若弃置 → 对其造成 1 点火焰伤害
    */
+  /**
+   * 【火攻】
+   * ------------------------------------------------------------------
+   * 严格对照无名杀 card/extra.js 的 huogong.content：
+   *
+   *   ① 目标展示一张手牌（**展示**，不是明置）
+   *      - 只有 1 张手牌时直接展示，不询问
+   *      - 多张时由**目标自己**选择展示哪张（countCards === 1 的分支）
+   *   ② 使用者弃置一张与展示牌**同花色**的手牌
+   *      - filterDiscard = { suit: get.suit(cards2[0]) }
+   *      - 这是可选动作，可以放弃
+   *   ③ 若弃置成功 → 对目标造成 1 点**火焰**伤害
+   *      若未弃置 → 给目标加临时技能「火攻2」
+   *
+   * 【火攻2】的作用：无名杀里被火攻未受伤的目标会获得此标记，
+   * 表示「本次未被火攻所伤」，供后续技能判定用。
+   */
   async resolveHuogong(player, targets) {
     const target = targets && targets[0];
     if (!target || !target.alive) return;
@@ -2399,32 +2665,39 @@ export class Game {
       return;
     }
 
-    // ① 目标展示一张手牌（瞬时公开）
+    // ① 目标展示一张手牌
     let shown;
-    if (target.isHuman) {
+    const hs = target.getCards('h');
+    if (hs.length === 1) {
+      // 只有一张 → 直接展示，不询问（对应无名杀 countCards === 1 分支）
+      shown = hs[0];
+    } else if (target.isHuman) {
       const picked = await this.io.chooseCards(target, {
-        prompt: '【火攻】：请展示一张手牌',
+        prompt: '【火攻】：请选择一张手牌展示',
         position: 'h', min: 1, max: 1, cancelable: false,
       });
-      shown = (picked && picked[0]) || target.getCards('h')[0];
+      shown = (picked && picked[0]) || hs[0];
     } else {
-      // AI：展示价值最低的那张
-      const hs = target.getCards('h');
-      shown = this.ai.pickBestCard(hs, true) || hs[0];
+      // AI 目标：随机展示一张（同无名杀的 set('ai') 逻辑）
+      shown = this.ai.pickHuogongShow(target) || hs[0];
     }
     await this.showCards([shown], target, 1200);
+    this.log(`${target.name} 因【火攻】展示了 ${shown.text}`);
 
-    // ② 使用者可弃一张同花色手牌
+    // ② 使用者弃一张同花色手牌（可选）
+    const suitName = (SUITS[shown.suit] && SUITS[shown.suit].name) || shown.suit;
     const sameSuit = player.getCards('h', (c) => c.suit === shown.suit);
     if (!sameSuit.length) {
-      this.log(`${player.name} 没有与展示牌同花色的手牌，【火攻】未造成伤害`);
+      this.log(`${player.name} 没有${suitName}手牌，【火攻】未造成伤害`);
+      // 未受伤 → 加「火攻2」标记
+      this._markHuogongFail(target);
       return;
     }
 
-    let discard;
+    let discard = null;
     if (player.isHuman) {
       const picked = await this.io.chooseCards(player, {
-        prompt: `【火攻】：可弃置一张${SUITS[shown.suit].name}手牌造成 1 点火焰伤害`,
+        prompt: `【火攻】：可弃置一张${suitName}手牌，对其造成 1 点火焰伤害`,
         position: 'h', min: 1, max: 1,
         filter: (c) => c.suit === shown.suit,
         cancelable: true,
@@ -2436,11 +2709,23 @@ export class Game {
 
     if (!discard) {
       this.log(`${player.name} 放弃弃牌，【火攻】未造成伤害`);
+      this._markHuogongFail(target);
       return;
     }
-    await player.discardCards([discard]);
+
+    // 注意：这里必须用 discard(cards) —— 直接把**已选定的牌**弃置。
+    // 不能调 discardCards([card])：那个方法的第一个参数是「数量」，
+    // 传数组会再去询问玩家选牌，导致实际没弃掉（历史 bug：
+    // 玩家弃了牌但牌还在手上）。
+    await player.discard([discard]);
     this.log(`${player.name} 弃置 ${discard.text}，对 ${target.name} 造成火焰伤害`);
     await target.damage(1, player, 'huogong', null, 'fire');
+  }
+
+  /** 【火攻】未造成伤害时，给目标加「火攻2」标记 */
+  _markHuogongFail(target) {
+    target.flags.huogong2 = this.turnCount;
+    this.emit();
   }
 
   /**

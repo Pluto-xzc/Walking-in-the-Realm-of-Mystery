@@ -164,6 +164,29 @@ export class AI {
   }
 
   /**
+   * 【火攻】展示哪张手牌
+   * ------------------------------------------------------------------
+   * 参考无名杀 card/extra.js：
+   *   set('ai', card => {
+   *     if (_status.event.getRand() < 0.5) return Math.random();
+   *     return get.value(card);
+   *   })
+   * 即：**随机挑一张**，因为展示本身不损失牌，
+   * 无所谓给对手看什么（对手要弃同花色牌才能造成伤害，
+   * 花色是天定的，展示哪张都一样）。
+   *
+   * 但有一个例外：如果手里有某花色的"废牌"，展示它可以让
+   * 对手更容易弃出同花色牌 —— 不过对手巴不得你不弃，
+   * 所以实际上没有确定的优劣，随机即可。
+   */
+  pickHuogongShow(target) {
+    const hs = target.getCards('h');
+    if (!hs.length) return null;
+    if (hs.length === 1) return hs[0];
+    return hs[Math.floor(Math.random() * hs.length)];
+  }
+
+  /**
    * 朱雀羽扇：是否要把这张【杀】当火【杀】使用
    * 判断依据：目标穿藤甲时绝对不要用火（会被 +1），
    * 目标被横置（铁索）时用火能传导，价值高。

@@ -7,7 +7,7 @@
  *   - 开屏开源声明与资源加载
  */
 
-import { CARDS, numberLabel, SUITS, EQUIP_SLOTS } from './cards.js';
+import { CARDS, numberLabel, SUITS, EQUIP_SLOTS, EQUIP_SLOT_MAP } from './cards.js';
 import { CHARACTERS, GROUPS } from './characters.js';
 import { SKILLS } from './skills.js';
 import { IDENTITY_LABEL, IDENTITY_COLOR } from './match.js';
@@ -410,13 +410,7 @@ export class UI {
           const ch = CHARACTERS[id];
           const card = el('div', 'sgs-char-pick');
           if (picked === id) card.classList.add('selected');
-
-          // 头像
-          const img = el('img', 'pick-img');
-          img.alt = ch.name;
-          bindImageFallback(img, id, ch.name);
-          img.src = charImgPath(id);
-          card.appendChild(img);
+          card.style.setProperty('--grp-color', GROUPS[ch.group].color);
 
           // 右上角收藏星标
           const fav = el('div', 'sgs-char-fav', this.isFavorite(id) ? '★' : '☆');
@@ -432,14 +426,48 @@ export class UI {
           };
           card.appendChild(fav);
 
-          const info = el('div', 'pick-info');
-          info.appendChild(el('div', 'pick-name', ch.name));
+          /*
+           * 卡片排版（按需求）：首行名字 → 技能名 + 描述 → 势力
+           * 不显示原画（美术非重点，信息密度优先）。
+           *
+           * DOM：
+           *   .pick-name-row   名字 + 势力小标签
+           *   .pick-skill-list 每个技能一行：技能名（大字）+ 描述（小字）
+           */
+          const nameRow = el('div', 'pick-name-row');
+          nameRow.appendChild(el('span', 'pick-name', ch.name));
+          card.appendChild(nameRow);
+
+          const skillList = el('div', 'pick-skill-list');
+          ch.skills.forEach((sid) => {
+            const s = SKILLS[sid];
+            if (!s) return;
+            const row = el('div', 'pick-skill-row');
+            const t = el('div', 'pick-skill-title', s.name);
+            if (s.locked) t.classList.add('locked');
+            row.appendChild(t);
+            const d = el('div', 'pick-skill-desc', s.desc || '');
+            row.appendChild(d);
+            skillList.appendChild(row);
+          });
+          card.appendChild(skillList);
+
+          // 势力标签放最后
+          const footRow = el('div', 'pick-foot');
           const grpTag = el('span', 'pick-group', GROUPS[ch.group].label);
           grpTag.style.background = GROUPS[ch.group].color;
-          info.appendChild(grpTag);
-          info.appendChild(el('div', 'pick-skills',
-            ch.skills.map((s) => (SKILLS[s] ? SKILLS[s].name : s)).join(' · ')));
-          card.appendChild(info);
+          footRow.appendChild(grpTag);
+          // 体力也顺带标出，方便选将时判断
+          const hpVal = ch.hp != null ? ch.hp : ch.maxHp;
+          footRow.appendChild(el('span', 'pick-hp', `体力 ${hpVal}`));
+          card.appendChild(footRow);
+
+          // 整卡悬停时右键可看技能详情
+          card.oncontextmenu = (ev) => {
+            ev.preventDefault();
+            const s = SKILLS[ch.skills[0]];
+            if (s) this.showSkillDetail({ name: ch.name }, s, ev);
+          };
 
           card.onclick = () => {
             $$('.sgs-char-pick', grid).forEach((c) => c.classList.remove('selected'));
@@ -499,14 +527,33 @@ export class UI {
         <div class="sgs-pile-panel hidden" id="sgs-center-panel"></div>
       </div>
       <div class="sgs-self" id="sgs-self">
+        <!--
+          自己区域的 DOM 顺序（从上到下即为视觉顺序）：
+            ① 头像 + 名字 + 身份 + 技能按钮 + 体力/护甲文字
+            ② 结束回合按钮（在武将信息**下方**、手牌**上方**）
+            ③ 提示条
+            ④ 操作按钮（确定/取消等）
+            ⑤ 手牌区（贴紧屏幕底部）
+            ⑥ 装备区
+            ⑦ 接续信息（判定牌 / 横置 / token）—— 放在最下面不抢视线
+        -->
         <div class="sgs-self-top">
           <div class="sgs-self-avatar" id="sgs-self-avatar"></div>
           <div class="sgs-self-info">
-            <div class="sgs-self-name" id="sgs-self-name"></div>
-            <div class="sgs-self-skills" id="sgs-self-skills"></div>
+            <div class="sgs-self-name-row">
+              <span class="sgs-self-name" id="sgs-self-name"></span>
+              <span class="sgs-self-identity" id="sgs-self-identity"></span>
+            </div>
+            <div class="sgs-self-stat" id="sgs-self-stat"></div>
+            <!-- 技能按钮：可点击发动 -->
+            <div class="sgs-skill-btns" id="sgs-self-skills"></div>
           </div>
         </div>
-        <!-- 提示条与技能/操作按钮：紧贴手牌区上方 -->
+
+        <!-- 结束回合按钮：独立一行，位于武将信息下方 -->
+        <div class="sgs-endturn-row" id="sgs-endturn-row"></div>
+
+        <!-- 提示条与操作按钮：紧贴手牌区上方 -->
         <div class="sgs-prompt hidden" id="sgs-prompt"></div>
         <div class="sgs-actions" id="sgs-actions"></div>
         <div class="sgs-select-hint" id="sgs-select-hint">
@@ -516,8 +563,13 @@ export class UI {
             <button class="sgs-act-btn" id="sgs-hint-cancel">取 消</button>
           </div>
         </div>
+
+        <!-- 手牌区：贴紧屏幕底部 -->
         <div class="sgs-self-hand" id="sgs-self-hand"></div>
         <div class="sgs-self-equips" id="sgs-self-equips"></div>
+
+        <!-- 接续信息：判定牌 / 横置状态 / token -->
+        <div class="sgs-self-extras" id="sgs-self-extras"></div>
       </div>
     `;
     document.body.appendChild(table);
@@ -781,6 +833,260 @@ export class UI {
   }
 
   /* ============================================================
+   * 结束回合按钮（位于武将信息下方）
+   * ============================================================ */
+
+  renderEndTurnRow(me) {
+    const row = $('#sgs-endturn-row');
+    if (!row) return;
+    row.innerHTML = '';
+    const g = this.game;
+    if (!g) return;
+
+    // 只有「自己回合的出牌阶段」才显示结束回合
+    const isMyTurn = g.currentPlayer === me;
+    const canEnd = isMyTurn && me.alive && this.mode === 'action';
+    if (!canEnd) return;
+
+    const btn = el('button', 'sgs-act-btn primary sgs-endturn-btn', '结 束 回 合');
+    btn.title = '结束当前出牌阶段';
+    btn.onclick = () => {
+      if (this.endTurnResolver) {
+        const r = this.endTurnResolver;
+        this.endTurnResolver = null;
+        r({ type: 'end' });
+      }
+    };
+    row.appendChild(btn);
+  }
+
+  /* ============================================================
+   * 自己区域的接续信息：判定牌 / 横置 / token
+   * ============================================================ */
+
+  renderSelfExtras(me) {
+    const box = $('#sgs-self-extras');
+    if (!box) return;
+    box.innerHTML = '';
+
+    // ① 判定区牌
+    if (me.judges && me.judges.length) {
+      const wrap = el('div', 'sgs-self-judges');
+      wrap.appendChild(el('span', 'sgs-judge-label', '判定区'));
+      me.judges.forEach((c) => {
+        const n = this.buildCardNode(c, me, true);
+        n.title = `判定区：${c.fullname}\n${CARDS[c.name] ? CARDS[c.name].desc : ''}`;
+        n.oncontextmenu = (ev) => { ev.preventDefault(); this.showCardDetail(c, ev); };
+        wrap.appendChild(n);
+      });
+      box.appendChild(wrap);
+    }
+
+    // ② 横置状态
+    if (me.isChained) {
+      const chain = el('div', 'sgs-self-chain', '⛓ 横置（连环）状态');
+      chain.title = '你处于横置状态：受到属性伤害时会传导给其他横置角色，然后重置';
+      box.appendChild(chain);
+    }
+
+    // ③ token（由技能设置的标记）
+    const tokens = this.collectTokens(me);
+    if (tokens.length) {
+      const wrap = el('div', 'sgs-self-tokens');
+      tokens.forEach((t) => {
+        const tag = el('span', 'sgs-token' + (t.danger ? ' danger' : ''),
+          `${t.icon || '◆'} ${t.label}`);
+        tag.title = t.desc || t.label;
+        wrap.appendChild(tag);
+      });
+      box.appendChild(wrap);
+    }
+  }
+
+  /**
+   * 收集角色身上的 token（标记）
+   * ------------------------------------------------------------------
+   * 目前识别：
+   *   - 酒意（本回合下一张杀伤害加成）
+   *   - 裸衣 / 酒 等回合标记
+   *   - 兵粮寸断 / 乐不思蜀 造成的跳过阶段标记
+   * 未来武将技能通过 player.storage / flags 设置的标记也会在此展示。
+   */
+  collectTokens(p) {
+    const out = [];
+    const g = this.game;
+    if (!g) return out;
+
+    if ((p.storage.jiu || 0) > 0) {
+      out.push({
+        label: `酒意 ×${p.storage.jiu}`,
+        icon: '🍶',
+        desc: '本回合下一张【杀】伤害 +' + p.storage.jiu,
+      });
+    }
+    if (p.hasFlag('skipUse')) {
+      out.push({ label: '跳过出牌阶段', icon: '⛔', danger: true, desc: '被【乐不思蜀】影响' });
+    }
+    if (p.hasFlag('skipDraw')) {
+      out.push({ label: '跳过摸牌阶段', icon: '⛔', danger: true, desc: '被【兵粮寸断】影响' });
+    }
+    if (p.hasFlag('luoyi') === g.turnCount) {
+      out.push({ label: '裸衣', icon: '💪', desc: '本回合【杀】和【决斗】伤害 +1' });
+    }
+    // 明置的牌（若有）
+    const revealed = (p.hand || []).filter((c) => c.revealed);
+    if (revealed.length) {
+      out.push({
+        label: `明置 ×${revealed.length}`,
+        icon: '👁',
+        desc: '你有明置的手牌，其他角色可以看到：'
+          + revealed.map((c) => c.text).join('、'),
+      });
+    }
+    // 技能自带的 storage 标记（供未来武将使用）
+    for (const sid of (p.skills || [])) {
+      const st = p.storage[sid];
+      if (st === undefined || st === null || st === false) continue;
+      if (typeof st === 'object' && !Array.isArray(st)) {
+        for (const [k, v] of Object.entries(st)) {
+          if (v === undefined || v === null || v === false || v === 0) continue;
+          out.push({ label: `${k}${typeof v === 'number' ? ' ×' + v : ''}`, icon: '◆' });
+        }
+      }
+    }
+    return out;
+  }
+
+  /* ============================================================
+   * 右键详情
+   * ============================================================ */
+
+  /** 关闭已有的详情浮层 */
+  closeDetail() {
+    const old = document.getElementById('sgs-detail-pop');
+    if (old) old.remove();
+  }
+
+  /** 在鼠标位置弹出一个详情浮层 */
+  showDetailPop(html, ev) {
+    this.closeDetail();
+    const pop = el('div', 'sgs-detail-pop');
+    pop.id = 'sgs-detail-pop';
+    pop.innerHTML = html;
+    document.body.appendChild(pop);
+    // 定位：优先在鼠标右下方，超出屏幕则翻到左上
+    const r = pop.getBoundingClientRect();
+    let x = (ev.clientX || 100) + 12;
+    let y = (ev.clientY || 100) + 12;
+    if (x + r.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - r.width - 8);
+    if (y + r.height > window.innerHeight - 8) y = Math.max(8, window.innerHeight - r.height - 8);
+    pop.style.left = x + 'px';
+    pop.style.top = y + 'px';
+
+    const off = (e) => {
+      if (!pop.contains(e.target)) {
+        pop.remove();
+        document.removeEventListener('click', off, true);
+        document.removeEventListener('contextmenu', off, true);
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener('click', off, true);
+      document.addEventListener('contextmenu', off, true);
+    }, 0);
+  }
+
+  /** 显示技能详情 */
+  showSkillDetail(player, skill, ev) {
+    const typeText = {
+      trigger: '触发技', mod: '状态技', active: '主动技',
+    }[skill.type] || '技能';
+    const html = `
+      <div class="dp-title">${skill.name}</div>
+      <div class="dp-sub">${typeText}${skill.locked ? ' · 锁定技' : ''}　持有者：${player.name}</div>
+      <div class="dp-desc">${(skill.desc || '（暂无描述）').replace(/\n/g, '<br>')}</div>
+      <div class="dp-hint">右键其他技能/牌可查看对应详情</div>
+    `;
+    this.showDetailPop(html, ev);
+  }
+
+  /** 显示卡牌详情 */
+  showCardDetail(card, ev) {
+    if (!card) return;
+    const def = CARDS[card.name] || {};
+    const suit = SUITS[card.suit] || {};
+    const typeText = def.type === 'basic' ? '基本牌'
+      : def.type === 'trick' ? (def.delayed ? '延时锦囊' : '锦囊牌')
+        : def.type === 'equip' ? '装备牌' : '牌';
+    const subText = def.subtype ? (EQUIP_SLOT_MAP[def.subtype] || {}).label || '' : '';
+    const natureText = card.nature === 'fire' ? '火焰属性'
+      : card.nature === 'thunder' ? '雷电属性' : '';
+    const meta = [
+      `花色点数：${suit.label || ''}${numberLabel(card.number)}`,
+      `类别：${typeText}${subText ? ' · ' + subText : ''}`,
+      natureText ? `属性：${natureText}` : '',
+      def.attackRange ? `攻击范围：${def.attackRange}` : '',
+      card.zone ? `所在区域：${card.zone}` : '',
+    ].filter(Boolean).join('　');
+    const html = `
+      <div class="dp-title">${def.fullname || card.name}</div>
+      <div class="dp-sub">${meta}</div>
+      <div class="dp-desc">${(def.desc || '（暂无描述）').replace(/\n/g, '<br>')}</div>
+      ${def.tip ? `<div class="dp-hint">提示：${def.tip}</div>` : ''}
+    `;
+    this.showDetailPop(html, ev);
+  }
+
+  /* ============================================================
+   * 技能按钮
+   * ============================================================ */
+
+  /** 主动技当前是否可用 */
+  isSkillUsable(player, skill) {
+    const g = this.game;
+    if (!g) return false;
+    if (!player.alive) return false;
+    if (g.currentPlayer !== player) return false;
+    // 每回合限一次
+    if (player.flags['skill_' + skill.id] === g.turnCount) return false;
+    // 技能自带 filter
+    if (typeof skill.filter === 'function') {
+      try {
+        return !!skill.filter({ player, game: g, event: {} });
+      } catch (e) { return false; }
+    }
+    return true;
+  }
+
+  /** 点击技能按钮 */
+  async onSkillButtonClick(player, skill) {
+    if (this.skillBusy) return;
+    this.skillBusy = true;
+    try {
+      const g = this.game;
+      // 标记本回合已用
+      player.flags['skill_' + skill.id] = g.turnCount;
+      await skill.content({
+        player, game: g, event: {}, skill,
+        ui: this,
+      });
+      g.emit();
+    } catch (e) {
+      console.warn('技能发动失败', skill && skill.name, e);
+      this.setPrompt(`【${skill.name}】发动失败：${e.message}`);
+    } finally {
+      this.skillBusy = false;
+      this.render();
+    }
+  }
+
+  /** 渲染结束回合按钮的显隐（供 renderAction 调用） */
+  refreshEndTurnBtn() {
+    const me = this.game && this.game.players.find((p) => p.isHuman);
+    if (me) this.renderEndTurnRow(me);
+  }
+
+  /* ============================================================
    * 身份标记（玩家推理用）
    * ============================================================ */
 
@@ -1010,8 +1316,51 @@ export class UI {
       n.classList.toggle('selected', this.selectedCards.has(c));
     });
 
+    // 自己也可以成为目标（如【铁索连环】【桃】）
+    // sgs-self 不经过 buildPlayerNode，需要单独处理
+    this.renderSelfTargetState();
+
     this.updateHintText();
     this.updateHintButtons();
+  }
+
+  /**
+   * 自己作为目标时的选中状态与点击处理
+   * ------------------------------------------------------------------
+   * 对手的节点在 buildPlayerNode 里处理点击；
+   * 「自己」的节点是自己那一块（sgs-self），需要单独接。
+   */
+  renderSelfTargetState() {
+    const me = this.game.players.find((p) => p.isHuman);
+    const selfEl = $('#sgs-self');
+    if (!me || !selfEl) return;
+
+    const canPick = this.mode === 'targets' && this.targetCandidates
+      && this.targetCandidates.includes(me);
+    const isPicked = this.selectedTargets.includes(me);
+
+    selfEl.classList.toggle('self-targetable', !!canPick && !isPicked);
+    selfEl.classList.toggle('self-targeted', isPicked);
+
+    // 只在「可以选自己」时挂点击，避免干扰正常操作
+    if (canPick) {
+      selfEl.onclick = (e) => {
+        // 点到手牌/按钮时不触发（那些有自己的处理）
+        if (e.target.closest('.sgs-card')) return;
+        if (e.target.closest('button')) return;
+        if (e.target.closest('.sgs-act-btn')) return;
+        this.toggleTarget(me);
+      };
+    } else {
+      selfEl.onclick = null;
+    }
+
+    // 头像高亮
+    const av = $('#sgs-self-avatar');
+    if (av) {
+      if (isPicked) av.style.boxShadow = '0 0 0 3px #7fd4a8, 0 0 22px rgba(127,212,168,0.8)';
+      else av.style.boxShadow = '';
+    }
   }
 
   updateHintText() {
@@ -1046,11 +1395,10 @@ export class UI {
     img.src = charImgPath(me.charId);
     av.appendChild(img);
 
-    // 名字 + 势力 + 身份
+    // 名字行：座位号 + 名字 + 势力 + 身份（身份在名字后面）
     const grp = GROUPS[me.group];
     const nameEl = $('#sgs-self-name');
     nameEl.innerHTML = '';
-    // 座位号（用绝对座位号，主公固定 1 号位）
     const seatSelf = el('span', 'grp', `${this.seatLabel(me)} 号位`);
     seatSelf.style.background = IDENTITY_COLOR[me.identity] || '#3d8b6e';
     seatSelf.style.opacity = '0.9';
@@ -1059,31 +1407,74 @@ export class UI {
     const gb = el('span', 'grp', grp.label);
     gb.style.background = grp.color;
     nameEl.appendChild(gb);
+
+    // 身份单独放（技能按钮要排在身份之后）
+    const idEl = $('#sgs-self-identity');
+    idEl.innerHTML = '';
     const ib = el('span', 'grp', IDENTITY_LABEL[me.identity]);
     ib.style.background = IDENTITY_COLOR[me.identity];
-    nameEl.appendChild(ib);
+    idEl.appendChild(ib);
     if (!me.alive) {
       const dead = el('span', 'grp', '已阵亡');
       dead.style.background = '#555';
-      nameEl.appendChild(dead);
+      idEl.appendChild(dead);
     }
 
-    // 技能
+    // ---------------- 体力 / 护甲（文字形式）----------------
+    const statEl = $('#sgs-self-stat');
+    statEl.innerHTML = '';
+    const hpText = el('span', 'sgs-hp-text');
+    const hpPart = el('span', 'hp-part' + (me.hp <= 1 ? ' low' : ''),
+      `体力：${me.hp}/${me.maxHp}`);
+    hpText.appendChild(hpPart);
+    hpText.appendChild(el('span', 'sep', '｜'));
+    const armor = me.hujia || 0;
+    const armorPart = el('span', 'armor-part' + (armor === 0 ? ' zero' : ''),
+      `护甲：${armor}/${me.maxHujia || armor}`);
+    armorPart.title = '每点护甲可抵挡 1 点伤害，但不影响手牌上限';
+    hpText.appendChild(armorPart);
+    statEl.appendChild(hpText);
+
+    // ---------------- 技能按钮（可点击发动）----------------
+    // 位置：紧跟在身份之后。玩家自己按才发动，不再自动触发。
     const sk = $('#sgs-self-skills');
     sk.innerHTML = '';
     me.skills.forEach((sid) => {
       const s = SKILLS[sid];
       if (!s) return;
-      const chip = el('span', 'sgs-skill-chip', s.name);
-      if (s.locked) chip.classList.add('locked');
-      chip.title = `${s.name}：${s.desc}`;
-      sk.appendChild(chip);
+      const isActive = s.type === 'active' || s.trigger === 'phaseUse';
+      const btn = el('button', 'sgs-skill-btn' + (s.locked ? ' locked' : ''),
+        s.name);
+      btn.title = `${s.name}：${s.desc}\n（右键查看详情）`;
+
+      if (isActive) {
+        // 主动技：可点击发动
+        const usable = this.isSkillUsable ? this.isSkillUsable(me, s) : true;
+        btn.disabled = !usable;
+        if (usable) btn.classList.add('usable');
+        btn.onclick = () => {
+          if (btn.disabled) return;
+          this.onSkillButtonClick(me, s);
+        };
+      } else {
+        // 触发技 / 锁定技：不能主动按，只做展示
+        btn.disabled = true;
+        btn.classList.add('trigger-hint');
+        btn.title = `${s.name}：${s.desc}\n（${s.locked ? '锁定技，' : ''}满足条件时自动询问）`;
+      }
+      // 右键查看详情
+      btn.oncontextmenu = (ev) => {
+        ev.preventDefault();
+        this.showSkillDetail(me, s, ev);
+      };
+      sk.appendChild(btn);
     });
-    // 体力
-    const hpChip = el('span', 'sgs-skill-chip', `体力 ${me.hp}/${me.maxHp}`);
-    hpChip.style.background = 'rgba(176,58,58,0.2)';
-    hpChip.style.borderColor = 'rgba(176,58,58,0.5)';
-    sk.appendChild(hpChip);
+
+    // ---------------- 结束回合按钮（武将信息下方）----------------
+    this.renderEndTurnRow(me);
+
+    // ---------------- 接续信息：判定牌 / 横置 / token ----------------
+    this.renderSelfExtras(me);
 
     // ================= 手牌区（只放真正的手牌）=================
     // 装备区的牌不在这里显示 —— 它们有自己的格子（见 renderEquipSlots）。
@@ -1240,8 +1631,25 @@ export class UI {
     const strip = el('div', 'card-type-strip');
     face.appendChild(strip);
 
+    // ---- 属性标识（火杀 / 雷杀）----
+    // 【朱雀羽扇】可将普通【杀】转为火【杀】，转换后必须能一眼看出来。
+    const nature = card.nature || (CARDS[card.name] && CARDS[card.name].nature);
+    if (nature === 'fire' || nature === 'thunder') {
+      node.classList.add(`nature-${nature}`);
+      const nb = el('div', 'card-nature', nature === 'fire' ? '火' : '雷');
+      nb.title = nature === 'fire' ? '火焰属性伤害' : '雷电属性伤害';
+      node.appendChild(nb);
+    }
+
     node.appendChild(face);
-    node.title = `${card.text}\n${CARDS[card.name] ? CARDS[card.name].desc : ''}`;
+    node.title = `${card.text}\n${CARDS[card.name] ? CARDS[card.name].desc : ''}\n（右键查看详情）`;
+
+    // ---- 右键查看详情 ----
+    node.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.showCardDetail(card, ev);
+    };
 
     if (isEquip) node.classList.add('is-equip');
 
@@ -1760,46 +2168,39 @@ export class UI {
       wrap.innerHTML = '';
 
       const hand = player.hand;
-      let pickedCard = null;
 
-      this.setPrompt('出牌阶段：请选择要使用的牌或技能');
+      this.setPrompt('出牌阶段：请选择要使用的牌');
       this._hideHint();
 
-      // 结束回合按钮
-      const endBtn = el('button', 'sgs-act-btn danger', '结束回合');
-      endBtn.onclick = () => {
+      const cleanup = () => {
+        this.mode = null;
+        this.endTurnResolver = null;
+        this.setPrompt('');
+        $('#sgs-self-hand').onclick = null;
+        wrap.innerHTML = '';
+        const row = $('#sgs-endturn-row');
+        if (row) row.innerHTML = '';
+      };
+
+      /*
+       * 【结束回合】按钮**不在这里**。
+       * 按需求它应该独立放在「武将信息下方、手牌上方」，
+       * 由 renderEndTurnRow() 渲染到 #sgs-endturn-row。
+       * 这里只把 resolver 挂上，供那个按钮回调。
+       */
+      this.endTurnResolver = () => {
         cleanup();
         resolve({ type: 'end' });
       };
 
-      // 技能按钮
-      const skillBar = el('div', 'sgs-skill-bar');
-      player.skills.forEach((sid) => {
-        const s = SKILLS[sid];
-        if (!s || s.type !== 'active') return;
-        if (player.flags[`skill_${sid}`]) return;
-        const ctx = { player, game, event: {}, skill: s };
-        if (s.filter && !s.filter(ctx)) return;
-        const b = el('button', 'sgs-act-btn', `【${s.name}】`);
-        b.title = s.desc;
-        b.onclick = () => { cleanup(); resolve({ type: 'skill', skill: sid }); };
-        skillBar.appendChild(b);
-      });
-      wrap.appendChild(skillBar);
+      // 渲染结束回合按钮（独立一行）
+      this.renderEndTurnRow(player);
 
       // 手牌点击即使用
       const hint = el('div', 'hint-text');
       hint.style.cssText = 'font-size:12px;color:#9a8b78;width:100%;text-align:center;';
       hint.textContent = '点击下方手牌以使用；需要选择目标时按提示点击角色';
       wrap.appendChild(hint);
-      wrap.appendChild(endBtn);
-
-      const cleanup = () => {
-        this.mode = null;
-        this.setPrompt('');
-        $('#sgs-self-hand').onclick = null;
-        wrap.innerHTML = '';
-      };
 
       // 绑定手牌点击（只响应手牌区，不响应装备区）
       $('#sgs-self-hand').onclick = async (e) => {
