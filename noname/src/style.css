@@ -454,14 +454,284 @@ html, body {
   .sgs-rotate-overlay { display: flex; }
 }
 
-/* 牌池选择提示（五谷丰登等） */
+/* ==========================================================================
+   选将界面（标签栏 + 网格 + 固定确认栏）
+   ========================================================================== */
+.sgs-modal-box.sgs-char-box {
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+  padding-bottom: 0;
+}
+
+/* 势力标签栏 */
+.sgs-char-tabs {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 12px 0 8px;
+  flex-shrink: 0;
+}
+.sgs-char-tab {
+  min-width: 44px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-family: "KaiTi", "STKaiti", serif;
+  color: #cbbfa8;
+  background: rgba(245, 239, 228, 0.06);
+  border: 1px solid rgba(212, 160, 23, 0.25);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sgs-char-tab:hover { background: rgba(212, 160, 23, 0.16); color: #fff; }
+.sgs-char-tab.active {
+  background: linear-gradient(180deg, var(--gold-light), var(--gold));
+  color: #1a1613;
+  border-color: var(--gold-light);
+  font-weight: 700;
+}
+
+/* 网格可滚动，确认栏不随之滚动 */
+.sgs-char-grid {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 2px 8px;
+}
+.sgs-char-grid::-webkit-scrollbar { width: 8px; }
+.sgs-char-grid::-webkit-scrollbar-thumb {
+  background: rgba(212, 160, 23, 0.35); border-radius: 4px;
+}
+
+.sgs-char-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 32px 12px;
+  color: #8a7d6b;
+  font-size: 13px;
+}
+
+/* 收藏星标（卡片右上角） */
+.sgs-char-fav {
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  color: #8a7d6b;
+  background: rgba(20, 16, 13, 0.75);
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 3;
+  transition: transform 0.15s, color 0.15s;
+}
+.sgs-char-fav:hover { transform: scale(1.18); color: var(--gold-light); }
+.sgs-char-fav.on { color: var(--gold-light); text-shadow: 0 0 6px rgba(232,196,90,0.8); }
+
+/* 势力小标签（在名字旁） */
+.sgs-char-pick .pick-group {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 15px;
+  color: #fff;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+/* 底部固定确认栏 */
+.sgs-char-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 4px 4px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(212, 160, 23, 0.25);
+  background: linear-gradient(180deg, rgba(20,16,13,0.2), rgba(20,16,13,0.7));
+}
+.sgs-char-picked {
+  font-size: 13px;
+  color: #8a7d6b;
+}
+.sgs-char-picked.has { color: var(--gold-light); }
+.sgs-char-footer .sgs-act-btn {
+  padding: 9px 36px;
+  font-size: 15px;
+}
+
+/* ==========================================================================
+   身份标记菜单
+   ========================================================================== */
+.sgs-identity-badge.clickable { cursor: pointer; }
+.sgs-identity-badge.clickable:hover { filter: brightness(1.25); }
+.sgs-identity-badge.marked {
+  border: 1px dashed rgba(255,255,255,0.75);
+  opacity: 0.9;
+}
+.sgs-identity-badge.dead-identity {
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.6);
+  opacity: 0.85;
+}
+
+.sgs-idmark-menu {
+  position: fixed;
+  z-index: 60000;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(20, 16, 13, 0.98);
+  border: 1px solid rgba(212, 160, 23, 0.5);
+  border-radius: 6px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.7);
+}
+.sgs-idmark-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: "KaiTi", "STKaiti", serif;
+  color: #e8e0d0;
+  background: rgba(245, 239, 228, 0.08);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.sgs-idmark-btn:hover { background: rgba(212, 160, 23, 0.25); color: #fff; }
+.sgs-idmark-btn.active { outline: 2px solid var(--gold-light); font-weight: 700; }
+.sgs-idmark-btn.clear { color: #c07070; border-color: rgba(176,58,58,0.5); }
+
+/* ==========================================================================
+   观星式排列面板（牌堆顶 / 牌堆底）
+   ========================================================================== */
+.sgs-arrange {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50000;
+  background: rgba(10, 8, 6, 0.82);
+  align-items: center;
+  justify-content: center;
+}
+.sgs-arrange.active { display: flex; }
+
+.sgs-arrange-inner {
+  width: min(900px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #332b23, #241e18);
+  border: 1px solid rgba(212, 160, 23, 0.45);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 12px 44px rgba(0,0,0,0.75);
+}
+.sgs-arrange-title {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 19px;
+  color: var(--gold-light);
+  text-align: center;
+  margin-bottom: 12px;
+  letter-spacing: 2px;
+}
+.sgs-arrange-body { flex: 1; overflow-y: auto; min-height: 0; }
+.sgs-arrange-row { margin-bottom: 14px; }
+.sgs-arrange-label {
+  font-size: 12px;
+  color: #cbbfa8;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+.sgs-arrange-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 92px;
+  padding: 8px;
+  background: rgba(245, 239, 228, 0.04);
+  border: 1px dashed rgba(138, 125, 107, 0.45);
+  border-radius: 6px;
+}
+.sgs-arrange-empty {
+  font-size: 12px;
+  color: rgba(138, 125, 107, 0.6);
+  align-self: center;
+  padding: 0 8px;
+}
+.sgs-arrange-grid .sgs-card.arrange-card {
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.sgs-arrange-grid .sgs-card.arrange-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.55), 0 0 0 2px var(--gold-light);
+}
+.sgs-arrange-tip {
+  font-size: 11px;
+  color: #9a8b78;
+  line-height: 1.6;
+  padding: 6px 8px;
+  background: rgba(245, 239, 228, 0.05);
+  border-left: 2px solid rgba(212, 160, 23, 0.4);
+  border-radius: 3px;
+}
+.sgs-arrange-btns {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.sgs-arrange-btns .sgs-act-btn { padding: 9px 40px; }
+
+/* ==========================================================================
+   横置状态（铁索连环）
+   ========================================================================== */
+/* 头像整体略微倾斜，示意「横置」 */
+.sgs-player.chained .sgs-avatar-wrap {
+  transform: rotate(-4deg);
+  filter: saturate(0.85);
+}
+/* 横跨头像的锁链 */
+.sgs-chain-mark {
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(120, 120, 130, 0.55) 12%,
+    rgba(180, 180, 195, 0.75) 50%,
+    rgba(120, 120, 130, 0.55) 88%,
+    transparent 100%);
+  border-top: 2px solid rgba(220, 220, 235, 0.85);
+  border-bottom: 2px solid rgba(220, 220, 235, 0.85);
+  pointer-events: none;
+  z-index: 4;
+}
+.sgs-chain-mark .chain-link {
+  font-size: 15px;
+  color: #e8e8f0;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  letter-spacing: 2px;
+}
+
+/* ==========================================================================
+   牌池选择提示（五谷丰登等）
+   ========================================================================== */
 .sgs-pool-label {
   font-size: 12px;
   color: var(--gold-light);
   align-self: center;
   padding: 0 10px;
   white-space: nowrap;
-  writing-mode: horizontal-tb;
 }
 
 /* 「返回主站」按钮 */
@@ -776,10 +1046,26 @@ html, body {
    ========================================================================== */
 .sgs-self {
   flex-shrink: 0;
-  padding: 8px 12px 10px;
+  /* 贴紧屏幕底部：底部内边距压到最小，让手牌区紧贴下沿 */
+  padding: 8px 12px 2px;
+  margin-bottom: 0;
   background: linear-gradient(180deg, rgba(20,16,13,0.6), rgba(20,16,13,0.95));
   border-top: 1px solid rgba(212, 160, 23, 0.25);
   display: flex; flex-direction: column; gap: 6px;
+  /* 撑满剩余空间并让内容靠底对齐 */
+  justify-content: flex-end;
+}
+
+/* 手牌区：贴紧屏幕底部 */
+.sgs-self-hand {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* 装备区在最下面，保持紧凑 */
+.sgs-self-equips {
+  margin-bottom: 0;
+  padding-bottom: 4px;
 }
 
 .sgs-self-top {

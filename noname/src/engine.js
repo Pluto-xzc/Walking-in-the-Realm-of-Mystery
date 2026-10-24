@@ -100,14 +100,33 @@ export class Card {
     this.revealOwner = null;  // 明置时的归属者（换手即失去明置）
   }
 
-  /** 这张牌对 viewer 是否可见（内容能被看到） */
+  /**
+   * 这张牌对 viewer 是否可见（内容能被看到）
+   * ------------------------------------------------------------------
+   * 判据是对「牌实际所在的位置」而不是 owner 字段 ——
+   * owner 只表示"最后经手的人"，可能因为各种技能转移而滞后。
+   *
+   * 可见规则：
+   *   - 在 viewer 自己手里 → 可见
+   *   - 不在任何人手里（装备区/判定区/弃牌堆/牌堆/中央区）→ 公开可见
+   *   - 在别人手里 → 只有明置才可见
+   */
   isVisibleTo(viewer) {
-    // 自己的牌永远可见
-    if (this.owner === viewer) return true;
-    // 不在手牌区的牌本来就是公开的（装备区、判定区、弃牌堆等）
-    if (this.zone !== ZONE.HAND) return true;
-    // 手牌：只有明置时他人才能看到
-    return this.revealed;
+    if (!viewer) return true;
+    const g = viewer.game;
+    if (!g) return this.owner === viewer;
+    // ① 是否在 viewer 自己手里
+    if (viewer.hand && viewer.hand.includes(this)) return true;
+    // ② 是否在**别人**手里（手牌区）
+    for (const p of g.players) {
+      if (p === viewer) continue;
+      if (p.hand && p.hand.includes(this)) {
+        // 在别人手里 → 只有明置可见
+        return this.revealed;
+      }
+    }
+    // ③ 不在任何人手里 → 公开区域，可见
+    return true;
   }
 
   /** 赋予明置状态 */
@@ -1866,10 +1885,29 @@ export class Game {
       case 'nanman': await this.resolveAoe(player, card, 'sha'); break;
       case 'wanjian': await this.resolveAoe(player, card, 'shan'); break;
       case 'jiedao': await this.resolveJiedao(player, targets); break;
-      case 'lebu': case 'shandian': case 'bingliang':
-        if (targets && targets.length) await this.addJudgeCard(targets[0], card);
-        else await this.addJudgeCard(player, card);
+      /* 延时锦囊：必须指定目标，**绝不能默认给自己**
+       *（【闪电】是唯一可以给自己的，它是使用者的自我判定）
+       * 历史坑：原来写成 `else addJudgeCard(player)`，
+       * 导致【兵粮寸断】/【乐不思蜀】在没有目标时错误地贴到自己身上。 */
+      case 'shandian':
+        await this.addJudgeCard(player, card);
         return;
+      case 'lebu':
+      case 'bingliang': {
+        if (!targets || !targets.length) {
+          this.log(`【${card.fullname}】需要指定一名其他角色为目标`);
+          // 退回手牌，不消耗
+          if (!player.hand.includes(card)) {
+            card.zone = ZONE.HAND;
+            card.owner = player;
+            player.hand.push(card);
+          }
+          this.emit();
+          return;
+        }
+        await this.addJudgeCard(targets[0], card);
+        return;
+      }
       /* ---------- 风林火山 ---------- */
       case 'jiu': await this.resolveJiu(player); return;
       case 'huogong': await this.resolveHuogong(player, targets); break;

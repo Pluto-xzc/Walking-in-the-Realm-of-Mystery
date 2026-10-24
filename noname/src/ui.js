@@ -109,9 +109,19 @@ export class UI {
     this.selectedCards = new Set();
     this.selectedTargets = [];
     this.resolver = null;
-    this.mode = null;          // 'cards' | 'targets' | 'action' | 'confirm'
+    this.mode = null;          // 'cards' | 'targets' | 'action' | 'confirm' | 'arrange'
     this.promptText = '';
     this.config = {};
+    /**
+     * 身份标记（玩家自己的推测）
+     * ------------------------------------------------------------------
+     * 键为 player.id，值为 'zhu' | 'zhong' | 'fan' | 'nei'。
+     * 纯本地记录，**不影响任何规则判定**，仅供玩家自己推理用。
+     * 角色死亡后会公开真实身份，此时自动清除该标记。
+     */
+    this.identityMarks = {};
+    /** 收藏的武将（localStorage 持久化） */
+    this.favorites = this.loadFavorites();
   }
 
   /* ---------------- 生命周期 ---------------- */
@@ -330,6 +340,17 @@ export class UI {
   }
 
   /* ---------------- 选将界面 ---------------- */
+  /**
+   * 选将界面
+   * ------------------------------------------------------------------
+   * 结构（从上到下）：
+   *   标题 / 势力标签栏（全部 ⭐魏蜀吴群） / 武将网格（可滚动） / 底部固定确认栏
+   *
+   * 要点：
+   *   - 确认栏固定在底部，不必滚到底才能点
+   *   - 每张武将卡右上角有收藏星标，点击切换收藏
+   *   - 收藏持久化到 localStorage
+   */
   chooseCharacter(charIds, isLord) {
     return new Promise((resolve) => {
       const modal = $('#sgs-char-modal');
@@ -337,49 +358,119 @@ export class UI {
 
       const box = $('.sgs-modal-box', modal);
       box.innerHTML = '';
+      box.classList.add('sgs-char-box');
+
       box.appendChild(el('div', 'sgs-modal-title', isLord ? '选 择 主 公' : '选 择 武 将'));
       box.appendChild(el('div', 'sgs-modal-sub',
         isLord ? '你是主公，请从常备主公中选择一名' : '请选择一名武将开始游戏'));
 
-      const grid = el('div', 'sgs-char-grid');
+      // ---------------- 势力标签栏 ----------------
+      const TABS = [
+        { key: 'all', label: '全' },
+        { key: 'fav', label: '⭐' },
+        { key: 'wei', label: '魏' },
+        { key: 'shu', label: '蜀' },
+        { key: 'wu', label: '吴' },
+        { key: 'qun', label: '群' },
+      ];
+      let currentTab = 'all';
       let picked = null;
 
-      charIds.forEach((id) => {
-        const ch = CHARACTERS[id];
-        const card = el('div', 'sgs-char-pick');
-        const img = el('img', 'pick-img');
-        img.alt = ch.name;
-        bindImageFallback(img, id, ch.name);
-        img.src = charImgPath(id);
-        card.appendChild(img);
-        const info = el('div', 'pick-info');
-        info.appendChild(el('div', 'pick-name', ch.name));
-        info.appendChild(el('div', 'pick-skills',
-          ch.skills.map((s) => (SKILLS[s] ? SKILLS[s].name : s)).join(' · ')));
-        card.appendChild(info);
+      const tabBar = el('div', 'sgs-char-tabs');
+      const grid = el('div', 'sgs-char-grid');
 
-        card.onclick = () => {
-          $$('.sgs-char-pick', grid).forEach((c) => c.classList.remove('selected'));
-          card.classList.add('selected');
-          picked = id;
-          confirmBtn.disabled = false;
-        };
-        grid.appendChild(card);
-      });
-      box.appendChild(grid);
-
-      const btnWrap = el('div', '', '');
-      btnWrap.style.cssText = 'display:flex;justify-content:center;gap:12px;margin-top:20px;';
+      // 底部固定确认栏（不随网格滚动）
+      const footer = el('div', 'sgs-char-footer');
+      const pickedLabel = el('div', 'sgs-char-picked', '未选择');
       const confirmBtn = el('button', 'sgs-act-btn primary', '确 定');
       confirmBtn.disabled = true;
-      confirmBtn.style.padding = '10px 40px';
       confirmBtn.onclick = () => {
         if (!picked) return;
         modal.classList.remove('active');
+        box.classList.remove('sgs-char-box');
         resolve(picked);
       };
-      btnWrap.appendChild(confirmBtn);
-      box.appendChild(btnWrap);
+      footer.appendChild(pickedLabel);
+      footer.appendChild(confirmBtn);
+
+      /** 按当前标签页渲染网格 */
+      const renderGrid = () => {
+        grid.innerHTML = '';
+        let list = charIds.slice();
+        if (currentTab === 'fav') list = list.filter((id) => this.isFavorite(id));
+        else if (currentTab !== 'all') list = list.filter((id) => CHARACTERS[id].group === currentTab);
+
+        if (!list.length) {
+          grid.appendChild(el('div', 'sgs-char-empty',
+            currentTab === 'fav' ? '还没有收藏的武将（点击武将卡右上角的 ☆ 收藏）' : '该势力暂无武将'));
+          return;
+        }
+
+        list.forEach((id) => {
+          const ch = CHARACTERS[id];
+          const card = el('div', 'sgs-char-pick');
+          if (picked === id) card.classList.add('selected');
+
+          // 头像
+          const img = el('img', 'pick-img');
+          img.alt = ch.name;
+          bindImageFallback(img, id, ch.name);
+          img.src = charImgPath(id);
+          card.appendChild(img);
+
+          // 右上角收藏星标
+          const fav = el('div', 'sgs-char-fav', this.isFavorite(id) ? '★' : '☆');
+          if (this.isFavorite(id)) fav.classList.add('on');
+          fav.title = this.isFavorite(id) ? '取消收藏' : '收藏此武将';
+          fav.onclick = (ev) => {
+            ev.stopPropagation();          // 不要触发选将
+            const now = this.toggleFavorite(id);
+            fav.textContent = now ? '★' : '☆';
+            fav.classList.toggle('on', now);
+            fav.title = now ? '取消收藏' : '收藏此武将';
+            if (currentTab === 'fav' && !now) renderGrid();   // 在收藏页取消则移出列表
+          };
+          card.appendChild(fav);
+
+          const info = el('div', 'pick-info');
+          info.appendChild(el('div', 'pick-name', ch.name));
+          const grpTag = el('span', 'pick-group', GROUPS[ch.group].label);
+          grpTag.style.background = GROUPS[ch.group].color;
+          info.appendChild(grpTag);
+          info.appendChild(el('div', 'pick-skills',
+            ch.skills.map((s) => (SKILLS[s] ? SKILLS[s].name : s)).join(' · ')));
+          card.appendChild(info);
+
+          card.onclick = () => {
+            $$('.sgs-char-pick', grid).forEach((c) => c.classList.remove('selected'));
+            card.classList.add('selected');
+            picked = id;
+            confirmBtn.disabled = false;
+            pickedLabel.textContent = `已选：${ch.name}`;
+            pickedLabel.classList.add('has');
+          };
+          grid.appendChild(card);
+        });
+      };
+
+      // 渲染标签栏
+      TABS.forEach((t) => {
+        const b = el('button', 'sgs-char-tab', t.label);
+        if (t.key === currentTab) b.classList.add('active');
+        b.onclick = () => {
+          currentTab = t.key;
+          $$('.sgs-char-tab', tabBar).forEach((x) => x.classList.remove('active'));
+          b.classList.add('active');
+          renderGrid();
+        };
+        tabBar.appendChild(b);
+      });
+
+      box.appendChild(tabBar);
+      box.appendChild(grid);
+      box.appendChild(footer);
+
+      renderGrid();
     });
   }
 
@@ -401,8 +492,6 @@ export class UI {
       <div class="sgs-board">
         <div class="sgs-opponents" id="sgs-opponents"></div>
         <div class="sgs-center">
-          <div class="sgs-center-label">中央区（本回合打出）</div>
-          <div class="sgs-processing" id="sgs-processing"></div>
           <div class="sgs-prompt hidden" id="sgs-prompt"></div>
         </div>
         <div class="sgs-log-panel" id="sgs-log"></div>
@@ -417,16 +506,18 @@ export class UI {
             <div class="sgs-self-skills" id="sgs-self-skills"></div>
           </div>
         </div>
+        <!-- 提示条与技能/操作按钮：紧贴手牌区上方 -->
+        <div class="sgs-prompt hidden" id="sgs-prompt"></div>
+        <div class="sgs-actions" id="sgs-actions"></div>
+        <div class="sgs-select-hint" id="sgs-select-hint">
+          <div class="hint-text" id="sgs-hint-text"></div>
+          <div class="hint-btns">
+            <button class="sgs-act-btn primary" id="sgs-hint-ok">确 定</button>
+            <button class="sgs-act-btn" id="sgs-hint-cancel">取 消</button>
+          </div>
+        </div>
         <div class="sgs-self-hand" id="sgs-self-hand"></div>
         <div class="sgs-self-equips" id="sgs-self-equips"></div>
-      </div>
-      <div class="sgs-actions" id="sgs-actions"></div>
-      <div class="sgs-select-hint" id="sgs-select-hint">
-        <div class="hint-text" id="sgs-hint-text"></div>
-        <div class="hint-btns">
-          <button class="sgs-act-btn primary" id="sgs-hint-ok">确 定</button>
-          <button class="sgs-act-btn" id="sgs-hint-cancel">取 消</button>
-        </div>
       </div>
     `;
     document.body.appendChild(table);
@@ -445,6 +536,18 @@ export class UI {
     result.id = 'sgs-result-modal';
     result.appendChild(el('div', 'sgs-modal-box'));
     document.body.appendChild(result);
+
+    // 观星式排列面板（牌堆顶 / 牌堆底 两栏）
+    const arrange = el('div', 'sgs-arrange');
+    arrange.id = 'sgs-arrange';
+    arrange.innerHTML = `
+      <div class="sgs-arrange-inner">
+        <div class="sgs-arrange-title">调整牌的顺序</div>
+        <div class="sgs-arrange-body" id="sgs-arrange-body"></div>
+        <div class="sgs-arrange-btns" id="sgs-arrange-btns"></div>
+      </div>
+    `;
+    document.body.appendChild(arrange);
   }
 
   bindGlobal() {
@@ -597,10 +700,24 @@ export class UI {
 
     node.classList.toggle('dead', !p.alive);
     node.classList.toggle('current-turn', g.currentPlayer === p);
+    // 横置状态（铁索连环）
+    node.classList.toggle('chained', !!p.isChained);
 
     // 体力点：数量或状态变化时重建
     const avWrap = node.querySelector('.sgs-avatar-wrap');
     if (avWrap) {
+      // 横置锁链标记：按需增删
+      const hasMark = !!avWrap.querySelector('.sgs-chain-mark');
+      if (p.isChained && !hasMark) {
+        const chain = el('div', 'sgs-chain-mark');
+        chain.innerHTML = '<span class="chain-link">⛓</span>';
+        chain.title = '处于横置（连环）状态：受到属性伤害会传导';
+        avWrap.appendChild(chain);
+      } else if (!p.isChained && hasMark) {
+        const m = avWrap.querySelector('.sgs-chain-mark');
+        if (m) m.remove();
+      }
+
       const hp = avWrap.querySelector('.sgs-hp');
       const needRebuild = !hp
         || hp.children.length !== p.maxHp
@@ -663,6 +780,87 @@ export class UI {
     return String(player.seat + 1);
   }
 
+  /* ============================================================
+   * 身份标记（玩家推理用）
+   * ============================================================ */
+
+  /** 打开身份标记菜单 */
+  openIdentityMark(player, anchor) {
+    const existing = document.getElementById('sgs-idmark-menu');
+    if (existing) existing.remove();
+
+    const menu = el('div', 'sgs-idmark-menu');
+    menu.id = 'sgs-idmark-menu';
+
+    const opts = [
+      ['zhu', '主公'], ['zhong', '忠臣'], ['fan', '反贼'], ['nei', '内奸'],
+    ];
+    for (const [key, label] of opts) {
+      const b = el('button', 'sgs-idmark-btn', label);
+      b.style.borderColor = IDENTITY_COLOR[key];
+      if (this.identityMarks[player.id] === key) b.classList.add('active');
+      b.onclick = () => {
+        if (this.identityMarks[player.id] === key) delete this.identityMarks[player.id];
+        else this.identityMarks[player.id] = key;
+        menu.remove();
+        this.render();
+      };
+      menu.appendChild(b);
+    }
+    // 清除标记
+    const clear = el('button', 'sgs-idmark-btn clear', '清除');
+    clear.onclick = () => {
+      delete this.identityMarks[player.id];
+      menu.remove();
+      this.render();
+    };
+    menu.appendChild(clear);
+
+    document.body.appendChild(menu);
+    // 定位到角标附近
+    const r = anchor.getBoundingClientRect();
+    menu.style.left = `${Math.min(r.left, window.innerWidth - 200)}px`;
+    menu.style.top = `${r.bottom + 4}px`;
+
+    // 点击别处关闭
+    const off = (ev) => {
+      if (!menu.contains(ev.target)) {
+        menu.remove();
+        document.removeEventListener('click', off, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', off, true), 0);
+  }
+
+  /* ============================================================
+   * 武将收藏（localStorage 持久化）
+   * ============================================================ */
+
+  loadFavorites() {
+    try {
+      const raw = localStorage.getItem('sgs_favorites');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+
+  saveFavorites() {
+    try {
+      localStorage.setItem('sgs_favorites', JSON.stringify(this.favorites));
+    } catch (e) { /* 隐私模式忽略 */ }
+  }
+
+  isFavorite(charId) {
+    return this.favorites.includes(charId);
+  }
+
+  toggleFavorite(charId) {
+    const i = this.favorites.indexOf(charId);
+    if (i >= 0) this.favorites.splice(i, 1);
+    else this.favorites.push(charId);
+    this.saveFavorites();
+    return this.isFavorite(charId);
+  }
+
   buildPlayerNode(p, isSelf) {
     const g = this.game;
     const node = el('div', 'sgs-player');
@@ -695,14 +893,34 @@ export class UI {
       + (p === me ? '（你）' : '');
     avWrap.appendChild(seatEl);
 
-    // 身份
+    // 身份角标
+    // 未公开时显示「?」，点击可标记自己推测的身份（仅本地记录，不影响规则）
     const idBadge = el('div', 'sgs-identity-badge');
     if (p.identityShown) {
+      // 身份已公开 → 清除此前的本地推测标记
+      if (this.identityMarks[p.id]) delete this.identityMarks[p.id];
       idBadge.textContent = IDENTITY_LABEL[p.identity];
       idBadge.style.background = IDENTITY_COLOR[p.identity];
+      idBadge.classList.add('revealed');
+      if (!p.alive) idBadge.classList.add('dead-identity');
     } else {
-      idBadge.textContent = '?';
-      idBadge.classList.add('hidden');
+      const mark = this.identityMarks[p.id];
+      if (mark) {
+        // 玩家自己标记的推测身份：虚线框 + 问号后缀，与真实公开区分
+        idBadge.textContent = IDENTITY_LABEL[mark] + '?';
+        idBadge.style.background = IDENTITY_COLOR[mark];
+        idBadge.classList.add('marked');
+        idBadge.title = `你的推测：${IDENTITY_LABEL[mark]}（点击修改）`;
+      } else {
+        idBadge.textContent = '?';
+        idBadge.classList.add('unknown');
+        idBadge.title = '点击标记你推测的身份';
+      }
+      idBadge.classList.add('clickable');
+      idBadge.onclick = (ev) => {
+        ev.stopPropagation();
+        this.openIdentityMark(p, idBadge);
+      };
     }
     avWrap.appendChild(idBadge);
 
@@ -714,6 +932,16 @@ export class UI {
       hp.appendChild(d);
     }
     avWrap.appendChild(hp);
+
+    // 横置标识（铁索连环）：在头像上画一条横锁链
+    if (p.isChained) {
+      node.classList.add('chained');
+      const chain = el('div', 'sgs-chain-mark');
+      chain.innerHTML = '<span class="chain-link">⛓</span>';
+      chain.title = '处于横置（连环）状态：受到属性伤害会传导';
+      avWrap.appendChild(chain);
+    }
+
     node.appendChild(avWrap);
 
     // 名字
@@ -1057,45 +1285,15 @@ export class UI {
     this.renderSelectionState();
   }
 
+  /**
+   * 中央区 / 判定区的**画面外**渲染
+   * ------------------------------------------------------------------
+   * 按需求，中央区不再显示在牌桌正中（改由顶栏「中央区」按钮查看），
+   * 因此这里不再渲染中央区。判定区仍需要小徽章提示。
+   */
   renderProcessing() {
-    const wrap = $('#sgs-processing');
-    const g = this.game;
-
-    // ---- 中央区：本回合打出的牌 ----
-    // 这些牌同时属于弃牌堆；回合结束后会移入弃牌堆，中央区清空。
-    const center = g.getCenterZone();
-    const sig = center.map((c) => c.id).join(',');
-    if (wrap.dataset.sig !== sig) {
-      wrap.dataset.sig = sig;
-      wrap.innerHTML = '';
-      if (!center.length) {
-        // 空时给出提示，方便玩家理解这个区域
-        const empty = el('div', 'sgs-center-empty', '（本回合暂无打出的牌）');
-        wrap.appendChild(empty);
-      } else {
-        center.slice(-12).forEach((c) => {
-          const n = this.buildCardNode(c, g.currentPlayer, true);
-          wrap.appendChild(n);
-        });
-        if (center.length > 12) {
-          wrap.appendChild(el('div', 'sgs-center-more', `+${center.length - 12}`));
-        }
-      }
-    }
-
-    // ---- 判定区牌（当前回合玩家）----
-    const cp = g.currentPlayer;
-    const jSig = cp && cp.judges.length ? cp.judges.map((c) => c.id).join(',') : '';
-    if (wrap.dataset.jsig !== jSig) {
-      wrap.dataset.jsig = jSig;
-      if (cp && cp.judges.length) {
-        cp.judges.forEach((c) => {
-          const n = this.buildCardNode(c, cp, true);
-          n.title = `判定区：${c.text}`;
-          wrap.appendChild(n);
-        });
-      }
-    }
+    // 中央区已移到面板（见 renderCenterPanel），此处不再绘制
+    // 判定区信息通过对手节点的徽章展示（buildPlayerNode 里已处理）
   }
 
   /**
@@ -1461,25 +1659,88 @@ export class UI {
   /**
    * 观星调整牌序
    */
+  /**
+   * 观星式排列（牌堆顶 / 牌堆底 两栏分配）
+   * ------------------------------------------------------------------
+   * 参考无名杀的 chooseToGuanxing：
+   *   上半栏 = 置于牌堆顶（顺序即放回顺序，先放的在上）
+   *   下半栏 = 置于牌堆底
+   * 玩家点击牌在两栏之间移动。
+   */
   arrangeCards(player, cards, prompt) {
     return new Promise((resolve) => {
-      if (!player.isHuman) { resolve({ top: cards, bottom: [] }); return; }
-      // 简化：全部放回牌堆顶，顺序不变
-      // 完整实现可做拖拽排序，此处给出明确的交互说明
-      this.mode = 'confirm';
-      this.promptText = prompt;
-      const wrap = $('#sgs-actions');
-      wrap.innerHTML = '';
-      this.setPrompt(`${prompt}（当前实现：保持顺序置于牌堆顶，可点击下方按钮确认）`);
-      const b = el('button', 'sgs-act-btn primary', '确定');
-      b.onclick = () => {
-        wrap.innerHTML = '';
+      if (!player.isHuman) {
+        // AI：认为自己能抽到的留下，其余放底（简化策略）
+        resolve({ top: cards, bottom: [] });
+        return;
+      }
+
+      this.mode = 'arrange';
+      this.arrangeAll = cards.slice();
+      this.arrangeTop = cards.slice();   // 默认全部在顶栏
+      this.arrangeBottom = [];           // 底栏初始为空
+      this.setPrompt(prompt || '观星：点击牌可在「牌堆顶 / 牌堆底」之间移动');
+
+      const panel = $('#sgs-arrange');
+      panel.classList.add('active');
+      this.renderArrange();
+
+      const done = el('button', 'sgs-act-btn primary', '确 定');
+      done.onclick = () => {
+        panel.classList.remove('active');
+        panel.innerHTML = '';
         this.mode = null;
         this.setPrompt('');
-        resolve({ top: cards, bottom: [] });
+        resolve({ top: this.arrangeTop.slice(), bottom: this.arrangeBottom.slice() });
       };
-      wrap.appendChild(b);
+      const btnWrap = $('#sgs-arrange-btns');
+      btnWrap.appendChild(done);
     });
+  }
+
+  /** 渲染观星面板 */
+  renderArrange() {
+    const panel = $('#sgs-arrange');
+    const body = $('#sgs-arrange-body');
+    body.innerHTML = '';
+
+    const topRow = el('div', 'sgs-arrange-row');
+    topRow.appendChild(el('div', 'sgs-arrange-label', `牌堆顶（${this.arrangeTop.length}）`));
+    const topGrid = el('div', 'sgs-arrange-grid');
+    this.arrangeTop.forEach((c) => {
+      const n = this.buildCardNode(c, null, true);
+      n.classList.add('arrange-card');
+      n.onclick = () => {
+        this.arrangeTop = this.arrangeTop.filter((x) => x !== c);
+        this.arrangeBottom.push(c);
+        this.renderArrange();
+      };
+      topGrid.appendChild(n);
+    });
+    if (!this.arrangeTop.length) topGrid.appendChild(el('div', 'sgs-arrange-empty', '（空）'));
+    topRow.appendChild(topGrid);
+    body.appendChild(topRow);
+
+    const botRow = el('div', 'sgs-arrange-row');
+    botRow.appendChild(el('div', 'sgs-arrange-label', `牌堆底（${this.arrangeBottom.length}）`));
+    const botGrid = el('div', 'sgs-arrange-grid');
+    this.arrangeBottom.forEach((c) => {
+      const n = this.buildCardNode(c, null, true);
+      n.classList.add('arrange-card');
+      n.onclick = () => {
+        this.arrangeBottom = this.arrangeBottom.filter((x) => x !== c);
+        this.arrangeTop.push(c);
+        this.renderArrange();
+      };
+      botGrid.appendChild(n);
+    });
+    if (!this.arrangeBottom.length) botGrid.appendChild(el('div', 'sgs-arrange-empty', '（空）'));
+    botRow.appendChild(botGrid);
+    body.appendChild(botRow);
+
+    const tip = el('div', 'sgs-arrange-tip',
+      '点击牌可在两栏之间移动。牌堆顶的牌会按此处从左到右的顺序被摸到。');
+    body.appendChild(tip);
   }
 
   /**
@@ -1723,12 +1984,56 @@ export class UI {
         };
       }
 
-      // ---- 无需选目标的牌 ----
+      // ---- 【无需选目标的牌】 ----
       case 'wugu':
       case 'taoyuan':
       case 'nanman':
       case 'wanjian':
         return { ok: true };
+
+      /* ================= 风林火山 ================= */
+
+      // ---- 【酒】：只对自己 ----
+      case 'jiu': {
+        // 濒死时等同【桃】；平时每回合限一次
+        if (player.hp <= 0) return { ok: true, autoTargets: [player] };
+        const used = player.flags.jiuUsed || 0;
+        if (used >= 1) return { ok: false, reason: '本回合已使用过【酒】' };
+        return { ok: true, autoTargets: [player] };
+      }
+
+      // ---- 【火攻】：一名有手牌的其他角色 ----
+      case 'huogong': {
+        const cands = others.filter((p) => p.countCards('h') > 0
+          && game.canBeTargeted(p, card));
+        if (!cands.length) return { ok: false, reason: '没有有手牌的可选目标' };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【火攻】请选择一名有手牌的角色',
+        };
+      }
+
+      // ---- 【铁索连环】：1~2 名角色（可以包括自己） ----
+      case 'tiesuo': {
+        const cands = g.players.filter((p) => p.alive && game.canBeTargeted(p, card));
+        if (!cands.length) return { ok: false, reason: '没有可选目标' };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 2,
+          targetPrompt: '【铁索连环】请选择 1~2 名角色（横置/重置）',
+        };
+      }
+
+      // ---- 【兵粮寸断】：距离 1 内的一名其他角色 ----
+      case 'bingliang': {
+        const cands = others.filter((p) => game.canBeTargeted(p, card)
+          && p.judges.length < 2
+          && (game.trickNoDistance(player) || player.distanceTo(p) <= 1));
+        if (!cands.length) return { ok: false, reason: '距离 1 内没有可选目标（不能对自己使用）' };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: '【兵粮寸断】请选择距离 1 内的一名其他角色',
+        };
+      }
 
       default:
         // 装备牌：直接装备

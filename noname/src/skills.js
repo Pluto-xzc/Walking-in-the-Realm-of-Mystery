@@ -815,7 +815,16 @@ export const SKILLS = {
     mod: {
       immunity: (card) => ['nanman', 'wanjian'].includes(card.name)
         || (card.name === 'sha' && !card.nature),
-      damageTaken: (num, card) => (card && card.nature === 'fire' ? num + 1 : num),
+      /**
+       * 第一级：增减伤
+       * 火焰伤害 +1。
+       * 注意：card 可能为 null（如【火攻】用 nature 参数传入属性），
+       * 因此必须同时看 ev.card.nature 与 ev.nature。
+       */
+      damageModify: (num, ev) => {
+        const nat = ev.nature || (ev.card && ev.card.nature);
+        return nat === 'fire' ? num + 1 : num;
+      },
     },
   },
   hanbing_skill: {
@@ -829,7 +838,115 @@ export const SKILLS = {
       await ctx.event.target.discardCards(2, 'he', '寒冰剑');
     },
   },
+
+  /* ==================================================================
+   * 风林火山装备技能
+   * ================================================================== */
+
+  /** 朱雀羽扇：可将一张普通【杀】当火【杀】使用或打出 */
+  zhuque_skill: {
+    id: 'zhuque_skill', name: '朱雀羽扇',
+    desc: '你可以将一张普通【杀】当火【杀】使用或打出。',
+    type: 'mod', locked: true, equip: true,
+    mod: {
+      /**
+       * 提供「火杀」转化能力
+       * 引擎在出【杀】时会查询此标记，若为 true 则允许玩家
+       * 选择是否将这张【杀】按火焰属性结算。
+       * 见 engine.useCard 里的 fireSha 分支。
+       */
+      canUseAsFireSha: () => true,
+    },
+  },
+
+  /** 木牛流马：可存放手牌，并将其下的牌如手牌般使用 */
+  muniu_skill: {
+    id: 'muniu_skill', name: '木牛流马',
+    desc: '出牌阶段限一次，你可以将一张手牌置于【木牛流马】下。'
+      + '你可以将【木牛流马】下的牌如手牌般使用或打出。',
+    type: 'active',
+    filter: (ctx) => {
+      const p = ctx.player;
+      // 未满 5 张且手里有牌时可发动
+      return p.countCards('h') > 0 && this.muniuCards(p).length < 5;
+    },
+    async content(ctx) {
+      const p = ctx.player;
+      const picked = await p.chooseCards({
+        prompt: '木牛流马：请选择一张手牌置于其下',
+        position: 'h', min: 1, max: 1, cancelable: true,
+      });
+      if (!picked || !picked.length) return;
+      const game = ctx.game;
+      const eq = p.equips.equip5;
+      if (!eq) return;
+      eq.storage = eq.storage || { cards: [] };
+      await p.loseCards(picked);
+      for (const c of picked) {
+        c.zone = 'equip';          // 视为装备区的附属牌
+        c.owner = p;
+        eq.storage.cards.push(c);
+      }
+      game.log(`${p.name} 将 ${picked.map((c) => c.text).join('、')} 置于【木牛流马】下`);
+      p.flags.muniuUsed = (p.flags.muniuUsed || 0) + 1;
+      game.emit();
+    },
+  },
+
+  /** 古锭刀：对无手牌的目标造成伤害 +1 */
+  guding_skill: {
+    id: 'guding_skill', name: '古锭刀',
+    desc: '你使用【杀】造成伤害时，若目标没有手牌，此伤害 +1。',
+    type: 'mod', locked: true, equip: true,
+    mod: {
+      /** 第一级：增减伤 */
+      damageModify: (num, ev) => {
+        if (!ev.card || ev.card.name !== 'sha') return num;
+        if (ev.player && ev.player.countCards('h') === 0) return num + 1;
+        return num;
+      },
+    },
+  },
+
+  /** 白银狮子：伤害超过 1 时只受 1 点；失去时回复 1 点 */
+  baiyin_skill: {
+    id: 'baiyin_skill', name: '白银狮子',
+    desc: '锁定技。当你受到伤害时，若此伤害大于 1，防止多余伤害。'
+      + '当你失去装备区里的【白银狮子】时，回复 1 点体力。',
+    type: 'mod', locked: true, equip: true,
+    mod: {
+      /**
+       * 特殊裁定（第三级，永远最后执行）
+       * ------------------------------------------------------------------
+       * 这是「finalDamage」这一类：不参与前面的增减伤计算，
+       * 而是在所有增伤/减伤/最终修改都算完之后，拿到最终数字，
+       * 再判断是否要动手。
+       *
+       * 效果：最终伤害 > 1 时，只受 1 点。
+       *
+       * 为什么必须最后：
+       *   设基础伤害 1，对方有【酒】+1、【藤甲】火焰+1，合计 3。
+       *   若白银狮子提前执行（看到 1，不触发），最终仍是 3 点 —— 错误。
+       *   最后执行（看到 3，减为 1），最终 1 点 —— 正确。
+       *
+       * 返回值：
+       *   number  → 采纳这个新数值
+       *   undefined → 不做修改
+       */
+      finalDamage: (num, ev, owner) => {
+        if (num > 1) return 1;
+        return undefined;
+      },
+    },
+  },
 };
+
+/** 取某角色【木牛流马】下的牌 */
+export function muniuCards(player) {
+  const eq = player.equips && player.equips.equip5;
+  if (!eq || eq.name !== 'muniu' || !eq.storage) return [];
+  return eq.storage.cards || [];
+}
 
 /** 技能显示名（用于日志） */
 export function skillName(id) {
