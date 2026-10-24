@@ -1057,11 +1057,12 @@ html, body {
 .sgs-self {
   flex-shrink: 0;
   /* 贴紧屏幕底部：底部内边距压到最小，让手牌区紧贴下沿 */
-  padding: 8px 12px 2px;
+  padding: 6px 12px 2px;
   margin-bottom: 0;
   background: linear-gradient(180deg, rgba(20,16,13,0.6), rgba(20,16,13,0.95));
   border-top: 1px solid rgba(212, 160, 23, 0.25);
-  display: flex; flex-direction: column; gap: 6px;
+  /* 行距压到 3px：自己区域整体更紧凑，提示条也就更贴近手牌 */
+  display: flex; flex-direction: column; gap: 3px;
   /* 撑满剩余空间并让内容靠底对齐 */
   justify-content: flex-end;
 }
@@ -1104,22 +1105,41 @@ html, body {
 /*
   自己区域的提示条
   ------------------------------------------------------------------
-  需求：紧贴手牌区的上端。
+  需求：紧贴手牌区的上端（越近越好）。
   .sgs-self 是 flex 纵向布局且 justify-content: flex-end，
-  用 margin-top: auto 把提示条推到「手牌区正上方」，
-  中间不会被撑开留白。
+  用 margin-top: auto 把提示条推到「手牌区正上方」。
+  这里把外边距全部清零、内边距压薄，避免与手牌之间出现大空隙。
 */
 .sgs-self > .sgs-prompt {
   margin-top: auto;
   margin-bottom: 0;
   align-self: stretch;
-  padding: 7px 14px;
-  font-size: 13px; line-height: 1.5;
+  padding: 5px 12px;
+  font-size: 12.5px; line-height: 1.45;
+  border-radius: 7px;
+  /* 长技能描述要能正常换行，且不把提示条撑得过高 */
+  text-align: left;
+  /* 让 \n 真正换行（技能描述单独成行） */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 5.2em;          /* 约 3 行，超出滚动 */
+  overflow-y: auto;
+}
+.sgs-self > .sgs-prompt::-webkit-scrollbar { width: 5px; }
+.sgs-self > .sgs-prompt::-webkit-scrollbar-thumb {
+  background: rgba(212, 160, 23, 0.35); border-radius: 3px;
 }
 
-/* 自己区域的操作按钮行（若仍在使用） */
+/* 自己区域的操作按钮行：空的时候不占高度 */
 .sgs-self > .sgs-actions {
   margin-top: 0;
+  gap: 6px;
+}
+.sgs-self > .sgs-actions:empty {
+  display: none;
+  min-height: 0;
+  padding: 0;
 }
 
 /* 自己区域的信息块：名字行 / 体力行 / 技能按钮 */
@@ -1131,6 +1151,18 @@ html, body {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }
 .sgs-self-stat { display: flex; align-items: center; }
+
+/*
+  体力行 + 接续信息同行
+  ------------------------------------------------------------------
+  判定牌 / 横置 / token 原本各占一行，把整个自己区域撑得很高。
+  现在它们与体力护甲并排，省下一整行；空间不够时允许换行。
+*/
+.sgs-self-stat-row {
+  display: flex; align-items: center;
+  gap: 10px; flex-wrap: wrap;
+  min-height: 0;
+}
 
 /* 结束回合按钮所在行（武将信息下方、手牌上方） */
 .sgs-endturn-row {
@@ -1172,6 +1204,23 @@ html, body {
 .sgs-self-name .grp {
   font-size: 11px; padding: 1px 6px; border-radius: 4px;
   color: #fff; font-family: sans-serif; font-weight: 700;
+}
+
+/*
+  身份角标（名字后面的「主公 / 忠臣 / 反贼 / 内奸」）
+  ------------------------------------------------------------------
+  历史问题：#sgs-self-identity 里的 .grp 完全没有样式，
+  只靠 JS 设了 background，结果内奸那种暗色底 + 默认字重显得很脏。
+  这里统一成与座位号一致的胶囊角标，并给个描边保证任何底色上都清晰。
+*/
+.sgs-self-identity { display: inline-flex; align-items: center; gap: 6px; }
+.sgs-self-identity .grp {
+  font-size: 11px; padding: 1px 7px; border-radius: 4px;
+  color: #fff; font-family: sans-serif; font-weight: 700;
+  letter-spacing: 0.5px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 .sgs-self-skills { display: flex; flex-wrap: wrap; gap: 5px; }
 .sgs-skill-chip {
@@ -1313,20 +1362,28 @@ html, body {
    自己区域的接续信息（判定牌 / 横置 / token）
    ========================================================================== */
 .sgs-self-extras {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 2px 4px 0;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 0;
   min-height: 0;
 }
 .sgs-self-judges {
   display: flex; align-items: center; gap: 5px;
 }
+/*
+  判定区的小牌
+  ------------------------------------------------------------------
+  ⚠️ transform: scale() 只改变「看起来」的大小，元素在布局中
+  仍然占着**未缩放的完整宽度**，会把这一行撑开导致换行。
+  所以这里用 zoom（现代浏览器已支持，且会真实影响布局），
+  再配合负外边距把多余空隙吃掉。
+*/
+.sgs-self-judges .sgs-card {
+  zoom: 0.62;             /* 真实缩小，参与布局计算 */
+  margin-right: -10px;
+}
 .sgs-self-judges .sgs-judge-label {
   font-size: 11px; color: #cbbfa8; letter-spacing: 1px;
-}
-.sgs-self-judges .sgs-card {
-  transform: scale(0.72);
-  transform-origin: left center;
-  margin-right: -14px;
+  white-space: nowrap;
 }
 .sgs-self-chain {
   display: inline-flex; align-items: center; gap: 5px;

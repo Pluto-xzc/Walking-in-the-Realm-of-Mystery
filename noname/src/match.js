@@ -22,7 +22,9 @@ export const IDENTITY_COLOR = {
   zhu: '#d4a017',
   zhong: '#b03a3a',
   fan: '#3d8b6e',
-  nei: '#7a6a55',
+  // 内奸：原先 #7a6a55 是灰褐色，做成角标后发闷、显脏。
+  // 换成偏冷的暗紫，与魏/蜀/吴/群的身份色都能区分开，也更有辨识度。
+  nei: '#6b4fa8',
 };
 
 function shuffle(arr) {

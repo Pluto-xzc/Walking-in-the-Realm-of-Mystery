@@ -549,7 +549,15 @@ export class UI {
               <span class="sgs-self-name" id="sgs-self-name"></span>
               <span class="sgs-self-identity" id="sgs-self-identity"></span>
             </div>
-            <div class="sgs-self-stat" id="sgs-self-stat"></div>
+            <!--
+              体力/护甲行 + 接续信息（判定牌 / 横置 / token）同行显示。
+              这两块内容都很短，放同一行可以省下一整行高度，
+              让整个自己区域更紧凑、更靠近手牌。
+            -->
+            <div class="sgs-self-stat-row">
+              <div class="sgs-self-stat" id="sgs-self-stat"></div>
+              <div class="sgs-self-extras" id="sgs-self-extras"></div>
+            </div>
             <!-- 技能按钮：可点击发动 -->
             <div class="sgs-skill-btns" id="sgs-self-skills"></div>
           </div>
@@ -581,9 +589,6 @@ export class UI {
         <!-- 手牌区：贴紧屏幕底部 -->
         <div class="sgs-self-hand" id="sgs-self-hand"></div>
         <div class="sgs-self-equips" id="sgs-self-equips"></div>
-
-        <!-- 接续信息：判定牌 / 横置状态 / token -->
-        <div class="sgs-self-extras" id="sgs-self-extras"></div>
       </div>
     `;
     document.body.appendChild(table);
@@ -2109,11 +2114,15 @@ export class UI {
     // 必发效果直接生效，不询问
     if (this.isSkillForced(skill)) return true;
 
-    // 确认框写明「是哪个技能」并附上该技能的**描述**
-    // 例：是否发动【奸雄】？（当你受到伤害后，你可以获得对你造成伤害的牌。）
+    // 确认框写明「是哪个技能」并附上该技能的**描述**。
+    // 描述单独成行：技能描述常常很长，挤在括号里会把标题行拉得很宽、
+    // 也不好读。用 \n 分成两行，由 CSS 的 white-space: pre-line 呈现。
+    //
+    //   是否发动【奸雄】？
+    //   当你受到伤害后，你可以获得对你造成伤害的牌。
     const desc = (skill.desc || '').trim();
     const prompt = desc
-      ? `是否发动【${skill.name}】？（${desc}）`
+      ? `是否发动【${skill.name}】？\n${desc}`
       : `是否发动【${skill.name}】？`;
     const use = await this.chooseOption(player, prompt, [
       { key: 'yes', label: '发动' },
