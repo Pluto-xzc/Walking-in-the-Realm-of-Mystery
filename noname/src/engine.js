@@ -486,8 +486,13 @@ export class Player {
 
   async discard(cards) {
     await this.loseCards(cards);
-    // 走统一入口：回合内会同时留在中央区，回合结束再归档
-    this.game.toDiscard(cards);
+    /*
+     * 弃置不等同于「使用」，因此这些牌**不应进入中央区**。
+     * 中央区（处理区）只放「本回合被使用/结算过的牌」，
+     * 若把弃牌也塞进去，会出现「弃掉的牌居然出现在中央区」的怪现象
+     *（实测【剪辑高手】弃掉的手牌就错误地出现在中央区）。
+     */
+    this.game.toDiscard(cards, { direct: true });
     if (cards.length) this.game.log(`${this.name} 弃置了 ${cards.map((c) => c.text).join('、')}`);
   }
 
@@ -566,8 +571,8 @@ export class Player {
     if (!list.length) return;
     this.game.log(`${this.name} 重铸了 ${list.map((c) => c.text).join('、')}`);
     await this.loseCards(list);
-    // 传数组：toDiscard(cards) 只收一个参数，展开会丢掉多余的牌
-    this.game.toDiscard(list);
+    // 重铸是「置入弃牌堆」而非「使用」，不进中央区
+    this.game.toDiscard(list, { direct: true });
     this.game.emit();
     await this.draw(list.length);
   }
@@ -807,7 +812,30 @@ export class Game {
    *   其余牌会凭空消失（曾导致阵亡/误杀忠臣/重铸时牌数不对）。
    *   这里统一吸收所有参数形式，从根上避免该类 bug。
    */
+  /**
+   * 归入弃牌堆
+   * ------------------------------------------------------------------
+   * ⚠️ 参数接受「数组」或「单张牌」，**也兼容可变参数**：
+   *   历史坑：调用方写成 toDiscard(...cards) 时，若只处理第一个参数，
+   *   其余牌会凭空消失（曾导致阵亡/误杀忠臣/重铸时牌数不对）。
+   *   这里统一吸收所有参数形式，从根上避免该类 bug。
+   *
+   * @param {Card|Card[]} cards
+   * @param {...Card} rest
+   *
+   * 说明：默认情况下，回合内弃置的牌会**同时**留在中央区，
+   * 以便技能区分「刚打出的牌」与「历史上的牌」。
+   * 但有些牌是**直接置入弃牌堆**的（如【剪辑高手】弃掉的手牌、
+   * 重铸的牌），它们并没有「被使用」，因此不该出现在中央区。
+   * 这类调用方应传 opts.direct = true 明确表达意图。
+   */
   toDiscard(cards, ...rest) {
+    // 末位若是选项对象，则取出（支持 toDiscard(cards, {direct:true})）
+    let opts = {};
+    if (rest.length && rest[rest.length - 1] && typeof rest[rest.length - 1] === 'object'
+      && rest[rest.length - 1].name === undefined) {
+      opts = rest.pop();
+    }
     const input = rest.length
       ? [].concat(cards || [], rest)
       : cards;
@@ -816,8 +844,13 @@ export class Game {
       c.zone = 'discard';
       if (!this.discardPile.includes(c)) this.discardPile.push(c);
       // 若仍在当前回合内，同时保留在中央区直到回合结束
-      if (this._inCurrentTurn && !this.centerZone.includes(c)) {
+      // （direct 的牌跳过这一步：它们没被「使用」，不属于处理区）
+      if (!opts.direct && this._inCurrentTurn && !this.centerZone.includes(c)) {
         this.centerZone.push(c);
+      } else if (opts.direct) {
+        // 双保险：万一之前已在中央区，也要摘掉
+        const ci = this.centerZone.indexOf(c);
+        if (ci >= 0) this.centerZone.splice(ci, 1);
       }
     }
     this.emit();
@@ -1235,7 +1268,21 @@ export class Game {
   async checkSkills(timing, event) {
     for (const p of this.players) {
       if (!p.alive) continue;
-      for (const sid of p.skills) {
+      /*
+       * 候选技能 = 武将技 + **装备技**
+       * ----------------------------------------------------------------
+       * ⚠️ 历史 bug：这里原先只遍历 p.skills（武将技能），
+       *    导致装备技能（贯石斧/青龙偃月刀/麒麟弓等）**永远不会被触发**。
+       *    玩家实测「装备贯石斧使用杀，对面打出闪后没触发贯石斧」即此因。
+       *    装备技不在 p.skills 里，而是挂在装备牌的 equipSkill 字段上。
+       */
+      const sids = p.skills.slice();
+      for (const c of Object.values(p.equips)) {
+        if (!c) continue;
+        const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
+        if (esid && !sids.includes(esid)) sids.push(esid);
+      }
+      for (const sid of sids) {
         const sk = SKILLS[sid];
         if (!sk || sk.type !== 'trigger' || sk.trigger !== timing) continue;
 
@@ -2367,15 +2414,19 @@ export class Game {
     if (player.hasFlag('skipUse')) { this.log(`${player.name} 跳过出牌阶段`); return; }
     this.log(`${player.name} 进入出牌阶段`);
 
+    // 标记「正处于出牌阶段」，供【杀】次数限制等判断使用
+    // （官方规则：只有自己的出牌阶段内才限制【杀】的次数）
+    this._inPlayPhase = true;
+
     // 出牌阶段开始时（如【星火尽染寒】在此发动）
     await this.checkSkills('phaseUseBegin', { player });
-    if (!player.alive || this.over) return;
+    if (!player.alive || this.over) { this._inPlayPhase = false; return; }
 
     this.emit();
 
     let guard = 0;
     while (guard++ < 60) {
-      if (!player.alive || this.over) return;
+      if (!player.alive || this.over) { this._inPlayPhase = false; return; }
       const action = await this.io.chooseAction(player, this);
       if (action.type === 'end') break;
       if (action.type === 'use') {
@@ -2384,6 +2435,7 @@ export class Game {
         await this.useSkill(player, action.skill);
       }
     }
+    this._inPlayPhase = false;
   }
 
   /* ============================================================
@@ -2433,6 +2485,20 @@ export class Game {
   /** 该角色本回合是否成为过牌的目标 */
   hasBeenTargetedThisTurn(player) {
     return !!(player.flags && player.flags.beenTargetedThisTurn);
+  }
+
+  /**
+   * 某角色此刻是否正处于**自己的出牌阶段**内
+   * ------------------------------------------------------------------
+   * 用于判断「每回合限一次【杀】」这类只在出牌阶段生效的限制。
+   * 判定条件：
+   *   ① 当前回合主角就是他
+   *   ② 当前正处于出牌阶段（由 phaseUse 进出时设置的标记保证）
+   */
+  isInPlayPhase(player) {
+    if (!player) return false;
+    if (this.currentPlayer !== player) return false;
+    return this._inPlayPhase === true;
   }
 
   async phaseDiscard(player) {
@@ -2507,16 +2573,28 @@ export class Game {
       return;
     }
 
-    // ③ 【杀】次数限制
+    /*
+     * ③ 【杀】次数限制
+     * ----------------------------------------------------------------
+     * 官方规则：**只有在自己的出牌阶段内**才有「每回合限一次【杀】」的限制。
+     * 出牌阶段之外（如回合结束时的技能视为使用【杀】、
+     * 其他角色回合中触发的效果）**没有次数限制**。
+     *
+     * 例：卡达【剪辑高手】在**回合结束时**视为使用【杀】，
+     *     此时不在出牌阶段内，因此不该受次数限制。
+     *
+     * 另：技能可临时赋予「本回合无次数限制」（如【星火尽染寒】）。
+     */
     if (card.name === 'sha') {
-      const used = player.flags.usedShaThisTurn || 0;
-      // 「本回合使用【杀】无次数限制」可由技能临时赋予
-      //（如【星火尽染寒】摸到的牌本回合不限次数）
-      const noLimit = this.shaUnlimited(player)
-        || (player.flags && player.flags.shaNoLimitThisTurn);
-      if (!noLimit && used >= 1) {
-        this.log(`${player.name} 本回合已使用过【杀】，无法再次使用`);
-        return;
+      const inMyPlayPhase = this.isInPlayPhase(player);
+      if (inMyPlayPhase) {
+        const used = player.flags.usedShaThisTurn || 0;
+        const noLimit = this.shaUnlimited(player)
+          || (player.flags && player.flags.shaNoLimitThisTurn);
+        if (!noLimit && used >= 1) {
+          this.log(`${player.name} 本回合已使用过【杀】，无法再次使用`);
+          return;
+        }
       }
     }
     // ④ 目标合法性
@@ -2802,7 +2880,7 @@ export class Game {
 
       // ---- ③ 把 A 置入弃牌堆（不经过中央区）----
       await player.loseCards([A]);
-      this.toDiscard([A]);
+      this.toDiscard([A], { direct: true });
       this.log(`${player.name} 发动【剪辑高手】，将 ${A.text} 置入弃牌堆，`
         + `视为使用中央区的 ${B.fullname}`);
 
@@ -3020,8 +3098,31 @@ export class Game {
 
       if (dodged) {
         this.log(`${realTarget.name} 打出【闪】抵消了【杀】`);
-        await this.checkSkills('shaDodged', { player, card, target: realTarget, source: player, forceHit: false });
-        if (!realTarget) continue;
+        /*
+         * 「被闪后仍可造成伤害」类技能（装备技优先）
+         * ----------------------------------------------------------------
+         * 【贯石斧】：被【闪】抵消时，可弃两张牌令此【杀】依然造成伤害。
+         * 【青龙偃月刀】：被【闪】抵消时，可再使用一张【杀】。
+         *
+         * 这些技能挂在 shaDodged 时机，通过 ev.forceHit 表达
+         *「虽然被闪，但依然命中」。
+         *
+         * ⚠️ 历史 bug：这里原先无条件 `continue`，**完全没有读取 forceHit**，
+         *    导致贯石斧弃了两张牌却依然没造成伤害（玩家实测反馈）。
+         *    现在必须先把 shaDodged 的结算收尾，再判断 forceHit。
+         */
+        const dodgedEv = { player, card, target: realTarget, source: player, forceHit: false };
+        await this.checkSkills('shaDodged', dodgedEv);
+
+        if (dodgedEv.forceHit && realTarget.alive) {
+          // 技能令此【杀】依然命中 → 正常造成伤害
+          this.log(`【${card.fullname}】依然对 ${realTarget.name} 造成伤害`);
+          await realTarget.damage(this.shaDamage(player), player, 'sha', card);
+          this.clearJiu(player);
+          this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
+          continue;
+        }
+
         this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
         // 这张【杀】已结算完（被闪避），酒意不再保留
         // 参考无名杀 jiu2 挂在 useCardAfter 上：此牌结算完就清
@@ -3231,7 +3332,8 @@ export class Game {
     const picked = await player.chooseCardFromPlayer(target, 'hej', `过河拆桥：弃置 ${target.name} 的一张牌`);
     if (picked && picked.length) {
       await target.loseCards(picked);
-      this.toDiscard(...picked);
+      // 拆牌是「弃置」不是「使用」，不进中央区
+      this.toDiscard(picked, { direct: true });
       this.log(`${player.name} 弃置了 ${target.name} 的 ${picked[0].text}`);
     }
   }
@@ -3338,6 +3440,16 @@ export class Game {
     const needSha = respondName === 'sha';
     for (const target of this.players.filter((p) => p.alive && p !== player)) {
       if (!target.alive) continue;
+      /*
+       * 目标限制（如折桠【星火尽染寒】）
+       * ----------------------------------------------------------------
+       * 群体锦囊不再是「全部其他角色」，而是「**符合条件的**全部其他角色」。
+       * 不符合条件的角色直接跳过，不参与响应、也不受伤。
+       */
+      if (!this.canTargetByLimits(player, target, card)) {
+        this.log(`${target.name} 不符合本回合的目标限制，不受【${card.fullname}】影响`);
+        continue;
+      }
       // 免疫（藤甲）
       if (this.isImmune(target, card)) {
         this.log(`${target.name} 免疫了【${card.fullname}】`);

@@ -742,6 +742,9 @@ export class UI {
         <!-- 结束回合按钮：独立一行，位于武将信息下方 -->
         <div class="sgs-endturn-row" id="sgs-endturn-row"></div>
 
+        <!-- 出牌阶段的临时按钮行（如【重铸】） -->
+        <div class="sgs-recast-row" id="sgs-recast-row"></div>
+
         <!--
           提示条与操作按钮：紧贴手牌区上端。
           .sgs-prompt 通过 CSS 的 margin-top:auto 被推到手牌正上方。
@@ -2227,9 +2230,28 @@ export class UI {
   /**
    * 选目标
    */
-  chooseTargets(player, { prompt, candidates, min = 1, max = 1 }) {
+  chooseTargets(player, { prompt, candidates, min = 1, max = 1, card }) {
     return new Promise((resolve) => {
       if (!candidates.length) { resolve([]); return; }
+
+      /*
+       * 统一过滤：技能施加的目标限制（mod.targetLimit）
+       * ----------------------------------------------------------------
+       * 例如折桠【星火尽染寒】发动后，本回合使用的牌只能指定
+       * 「手牌数或体力不小于你」的角色。
+       *
+       * ⚠️ 过滤必须发生在这里（进入选择界面之前），
+       *    否则玩家会「选中了才被引擎拒绝」，体验很差。
+       *    群体锦囊（南蛮/万箭）也走本函数，因此同样生效。
+       */
+      const g0 = this.game;
+      if (g0 && card && typeof g0.canTargetByLimits === 'function') {
+        candidates = candidates.filter(
+          (t) => t === player || g0.canTargetByLimits(player, t, card),
+        );
+        if (!candidates.length) { resolve([]); return; }
+        if (min > candidates.length) min = candidates.length;
+      }
 
       if (!player.isHuman) {
         // AI 直接挑
@@ -2563,11 +2585,15 @@ export class UI {
       const cleanup = () => {
         this.mode = null;
         this.endTurnResolver = null;
+        this.selectedPlayCard = null;
         this.setPrompt('');
         $('#sgs-self-hand').onclick = null;
         wrap.innerHTML = '';
         const row = $('#sgs-endturn-row');
         if (row) row.innerHTML = '';
+        const rr = $('#sgs-recast-row');
+        if (rr) rr.innerHTML = '';
+        this._renderRecastRow = null;
       };
 
       /*
@@ -2584,8 +2610,37 @@ export class UI {
       // 渲染结束回合按钮（独立一行）
       this.renderEndTurnRow(player);
 
-      // 手牌点击即使用
-      // （操作说明已并入上方提示行，这里不再单独插一个 div，省一行高度）
+      /*
+       * 【重铸】按钮
+       * ----------------------------------------------------------------
+       * 带 recastable 标记的牌（【铁索连环】【木牛流马】）可以在出牌阶段
+       * 置入弃牌堆并摸一张牌。之前只有引擎支持、没有入口，
+       * 导致玩家「找不到重铸的方式」。
+       *
+       * 交互：点一下手牌选中它 → 若该牌可重铸，就出现【重铸】按钮。
+       */
+      const renderRecastRow = () => {
+        const row = $('#sgs-recast-row');
+        if (!row) return;
+        const sel = this.selectedPlayCard;
+        const def = sel && CARDS[sel.name];
+        row.innerHTML = '';
+        if (!sel || !def || !def.recastable) return;
+        const btn = el('button', 'sgs-act-btn', `重铸【${def.fullname}】`);
+        btn.title = '将此牌置入弃牌堆，然后摸一张牌';
+        btn.onclick = async () => {
+          row.innerHTML = '';
+          this.selectedPlayCard = null;
+          this.render();
+          this.setPrompt(`重铸【${def.fullname}】…`);
+          await player.recast([sel]);
+          this.logRecast && this.logRecast();
+          this.setPrompt('出牌阶段：请选择要使用的牌或技能');
+          this.render();
+        };
+        row.appendChild(btn);
+      };
+      this._renderRecastRow = renderRecastRow;
 
       // 绑定手牌点击（只响应手牌区，不响应装备区）
       $('#sgs-self-hand').onclick = async (e) => {
@@ -2607,9 +2662,54 @@ export class UI {
         // 检查是否可用
         const check = this.checkCardUsable(player, card, game);
         if (!check.ok) {
+          /*
+           * 不可用，但如果这张牌**可重铸**，就给出重铸入口，
+           * 而不是只弹一句「不能用」——玩家否则会找不到重铸方式。
+           */
+          const cdef = CARDS[card.name];
+          if (cdef && cdef.recastable) {
+            this.selectedPlayCard = card;
+            renderRecastRow();
+            this.setPrompt(`【${cdef.fullname}】${check.reason}；`
+              + `但你可以把它重铸（置入弃牌堆并摸一张牌）`);
+            return;
+          }
           this.setPrompt(check.reason);
           setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
           return;
+        }
+
+        // 可重铸的牌：单击先选中，给出「使用 / 重铸」两个选择
+        const cdef2 = CARDS[card.name];
+        if (cdef2 && cdef2.recastable) {
+          this.selectedPlayCard = card;
+          renderRecastRow();
+          this.setPrompt(`已选中【${cdef2.fullname}】：可正常使用，`
+            + `或点下方【重铸】置换一张牌`);
+          return;
+        }
+
+        /*
+         * 统一过滤候选目标
+         * ----------------------------------------------------------------
+         * 技能可以通过 mod.targetLimit 收窄「谁能成为目标」
+         *（如折桠【星火尽染寒】：本回合只能指定手牌数或体力不小于你的角色）。
+         *
+         * ⚠️ 必须在**弹出选择界面之前**就过滤掉，
+         *    否则会出现「先让你选中、点了确定才被引擎弹回来」的糟糕体验。
+         */
+        if (check.needTargets && check.needTargets.length) {
+          const legal = check.needTargets.filter(
+            (t) => t === player || game.canTargetByLimits(player, t, card),
+          );
+          if (!legal.length) {
+            this.setPrompt(`没有符合条件的目标（本回合的目标限制）`);
+            setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
+            return;
+          }
+          check.needTargets = legal;
+          // 候选被收窄后，最小目标数也要跟着调整
+          if (check.targetMin > legal.length) check.targetMin = legal.length;
         }
 
         let targets = [];
@@ -2624,6 +2724,7 @@ export class UI {
             candidates: check.needTargets,
             min: check.targetMin || 1,
             max: check.targetMax || 1,
+            card,          // 传入牌，供 chooseTargets 应用目标限制
           });
           if (!picked || !picked.length) {
             // 玩家取消 → 回到出牌阶段，不消耗这张牌
@@ -2688,8 +2789,15 @@ export class UI {
       // ---- 【杀】：攻击范围内的一名其他角色 ----
       case 'sha': {
         const used = player.flags.usedShaThisTurn || 0;
-        let unlimited = game.shaUnlimited(player);
-        if (!unlimited && used >= 1) return { ok: false, reason: '本回合已使用过【杀】' };
+        const unlimited = game.shaUnlimited(player)
+          || (player.flags && player.flags.shaNoLimitThisTurn);
+        // 官方规则：只有**自己的出牌阶段内**才限制【杀】的次数。
+        // 出牌阶段之外（如【剪辑高手】在回合结束时视为使用）不受限。
+        const inMyPlayPhase = game.isInPlayPhase
+          ? game.isInPlayPhase(player) : true;
+        if (inMyPlayPhase && !unlimited && used >= 1) {
+          return { ok: false, reason: '本回合已使用过【杀】' };
+        }
         const cands = others.filter((p) => player.inAttackRange(p)
           && game.canBeTargeted(p, card));
         if (!cands.length) return { ok: false, reason: '攻击范围内没有可选目标' };
