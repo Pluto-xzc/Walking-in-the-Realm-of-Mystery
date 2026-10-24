@@ -129,6 +129,31 @@ export class UI {
     document.body.appendChild(splash);
   }
 
+  /**
+   * 竖屏遮罩（手机端强制横屏）
+   * ------------------------------------------------------------------
+   * 手牌/装备区/对手区在竖屏下会被严重压缩，容易出现布局错乱，
+   * 因此窄屏竖屏时盖一层提示，转横屏后自动消失。
+   *
+   * 判定条件（纯 CSS，见 .sgs-rotate-overlay）：
+   *   屏幕方向为 portrait 且宽度 <= 900px
+   * 桌面浏览器通常不会命中（高度不会远大于宽度）。
+   */
+  buildOrientationOverlay() {
+    if (document.getElementById('sgs-orient')) return;
+    const ov = el('div', 'sgs-rotate-overlay');
+    ov.id = 'sgs-orient';
+    ov.innerHTML = `
+      <div class="sgs-rotate-inner">
+        <div class="sgs-rotate-icon">📱</div>
+        <div class="sgs-rotate-title">请横屏游玩</div>
+        <div class="sgs-rotate-sub">手机竖屏下牌桌会被压缩，可能导致操作异常。<br>
+          请把手机转为横屏后继续。</div>
+      </div>
+    `;
+    document.body.appendChild(ov);
+  }
+
   /* ---------------- 开屏 ---------------- */
   /**
    * 显示开屏，返回 Promise（用户点击「开始游戏」后 resolve）
@@ -366,6 +391,7 @@ export class UI {
     table.innerHTML = `
       <div class="sgs-topbar">
         <span class="sgs-topbar-title font-title">三国杀 · 身份模式</span>
+        <button class="sgs-icon-btn" id="sgs-toggle-center">中央区</button>
         <button class="sgs-icon-btn" id="sgs-toggle-pile">弃牌堆</button>
         <button class="sgs-icon-btn" id="sgs-toggle-log">日志</button>
         <button class="sgs-icon-btn" id="sgs-restart">重新开始</button>
@@ -381,6 +407,7 @@ export class UI {
         </div>
         <div class="sgs-log-panel" id="sgs-log"></div>
         <div class="sgs-pile-panel hidden" id="sgs-pile"></div>
+        <div class="sgs-pile-panel hidden" id="sgs-center-panel"></div>
       </div>
       <div class="sgs-self" id="sgs-self">
         <div class="sgs-self-top">
@@ -404,6 +431,9 @@ export class UI {
     `;
     document.body.appendChild(table);
 
+    // 竖屏遮罩：手机上强制横屏，避免布局错乱
+    this.buildOrientationOverlay();
+
     // 选将弹窗
     const modal = el('div', 'sgs-modal');
     modal.id = 'sgs-char-modal';
@@ -424,8 +454,17 @@ export class UI {
       }
       if (e.target.id === 'sgs-toggle-pile') {
         const pile = $('#sgs-pile');
+        const center = $('#sgs-center-panel');
+        if (center) center.classList.add('hidden');
         pile.classList.toggle('hidden');
         if (!pile.classList.contains('hidden')) this.renderDiscardPile();
+      }
+      if (e.target.id === 'sgs-toggle-center') {
+        const center = $('#sgs-center-panel');
+        const pile = $('#sgs-pile');
+        if (pile) pile.classList.add('hidden');
+        center.classList.toggle('hidden');
+        if (!center.classList.contains('hidden')) this.renderCenterPanel();
       }
       if (e.target.id === 'sgs-restart') {
         if (confirm('确定要重新开始一局吗？')) {
@@ -825,10 +864,19 @@ export class UI {
 
     // 若当前处于「从外部牌池选牌」（如五谷丰登、从他人处选牌），
     // 则渲染那个牌池，而不是自己的手牌 —— 否则玩家无从下手。
+    //
+    // 关键：必须遵守信息隔离 —— 从他人处选牌时，
+    // 对方的**暗置手牌**不能显示内容，只能用背面占位。
     if (this.mode === 'cards' && this.cardCandidates && this.cardPoolExternal) {
       hand.appendChild(el('div', 'sgs-pool-label', this.poolLabel || '请选择一张牌'));
       this.cardCandidates.forEach((c) => {
-        hand.appendChild(this.buildCardNode(c, me, false, true));
+        const viewer = this.game.players.find((p) => p.isHuman) || me;
+        const canSee = this.game.canSeeCard(c, viewer);
+        if (canSee) {
+          hand.appendChild(this.buildCardNode(c, me, false, true));
+        } else {
+          hand.appendChild(this.buildHiddenCardNode(c));
+        }
       });
       return;
     }
@@ -918,6 +966,33 @@ export class UI {
       (a, b) => (order[CARDS[a.name].subtype] || 9) - (order[CARDS[b.name].subtype] || 9),
     );
     return [...hand, ...equipInHand];
+  }
+
+  /**
+   * 暗置牌（背面）节点
+   * ----------------------------------------------------------------
+   * 用于显示「看不到内容的牌」：他人的暗置手牌、牌堆等。
+   * 只显示背面花纹，不含花色点数与牌名。
+   *
+   * 明置机制：手牌被明置后可以正常 buildCardNode 显示正面；
+   * 展示（如火攻）是瞬时公开，由 engine 的 showingCards 标记，
+   * 不改变牌的持久状态。
+   */
+  buildHiddenCardNode(card) {
+    const node = el('div', 'sgs-card sgs-card-hidden');
+    node.dataset.cid = card ? card.id : '';
+    const face = el('div', 'card-face card-back');
+    face.appendChild(el('div', 'card-back-mark', '谜'));
+    node.appendChild(face);
+    node.title = '暗置的牌（看不到内容）';
+    // 可选性依然保留：能选中但看不到是什么
+    if (this.mode === 'cards' && this.cardCandidates
+      && this.cardCandidates.includes(card)) {
+      node.classList.add('selectable');
+      node.onclick = () => this.toggleCard(card);
+    }
+    if (this.selectedCards.has(card)) node.classList.add('selected');
+    return node;
   }
 
   buildCardNode(card, owner, isEquip) {
@@ -1083,6 +1158,55 @@ export class UI {
     }
   }
 
+  /**
+   * 中央区面板（点击按钮才显示）
+   * ------------------------------------------------------------------
+   * 只显示**本回合**打出的牌。回合结束后这些牌归档进弃牌堆，
+   * 此处自然清空（详见引擎的 centerZone 语义）。
+   */
+  renderCenterPanel() {
+    const g = this.game;
+    const panel = $('#sgs-center-panel');
+    if (!panel) return;
+
+    const center = g.getCenterZone();
+    const showing = g.getShowingCards();
+
+    panel.innerHTML = '';
+
+    const head = el('div', 'sgs-pile-head');
+    head.appendChild(el('span', 'sgs-pile-title', '中央区'));
+    head.appendChild(el('span', 'sgs-pile-stat',
+      `本回合打出 ${center.length} 张 · 回合结束后移入弃牌堆`));
+    const close = el('button', 'sgs-icon-btn', '关闭');
+    close.onclick = () => panel.classList.add('hidden');
+    head.appendChild(close);
+    panel.appendChild(head);
+
+    if (!center.length) {
+      panel.appendChild(el('div', 'sgs-pile-empty', '本回合还没有打出任何牌'));
+      return;
+    }
+
+    // 按打出顺序展示（最近的在前）
+    const sec = el('div', 'sgs-pile-section');
+    sec.appendChild(el('div', 'sgs-pile-section-title', `本回合（${center.length}）`));
+    const grid = el('div', 'sgs-pile-grid');
+    center.slice().reverse().forEach((c) => {
+      const n = this.buildCardNode(c, g.currentPlayer, true);
+      if (showing.includes(c)) n.classList.add('in-center');
+      grid.appendChild(n);
+    });
+    sec.appendChild(grid);
+    panel.appendChild(sec);
+
+    // 说明文字，帮助理解这个区域的作用
+    const tip = el('div', 'sgs-pile-tip');
+    tip.textContent = '中央区的牌同时属于弃牌堆（可被「在弃牌堆找牌」的技能检索到）；'
+      + '当前回合彻底结束后，这些牌会正式归档进弃牌堆，中央区随之清空。';
+    panel.appendChild(tip);
+  }
+
   renderLog() {
     const panel = $('#sgs-log');
     panel.innerHTML = '';
@@ -1126,8 +1250,13 @@ export class UI {
 
       let pool;
       if (cardList) pool = cardList.slice();
-      else if (fromPlayer) pool = fromPlayer.getCards(position, filter);
-      else pool = player.getCards(position, filter);
+      else if (fromPlayer) {
+        // 从他人处选牌：位置与数量基于真实牌堆，
+        // 但**内容**要遵守可见性（暗置手牌渲染成背面）
+        pool = fromPlayer.getCards(position, filter);
+      } else {
+        pool = player.getCards(position, filter);
+      }
 
       if (!pool.length) { resolve([]); return; }
 

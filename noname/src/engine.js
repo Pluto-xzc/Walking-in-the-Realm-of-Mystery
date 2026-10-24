@@ -70,10 +70,69 @@ export class Card {
     this.fullname = def.fullname || name;
     this.delayed = !!def.delayed;
     this.nature = null;       // 'fire' | 'thunder'
-    this.zone = 'deck';       // deck | hand | equip | judge | processing | discard
+    this.zone = 'deck';       // 见 ZONE 常量
     this.owner = null;
     this.virtual = false;     // 视为牌
     this.sourceCards = [];    // 视为牌对应的实体牌
+
+    /* ------------------------------------------------------------------
+     * 可见性 / 明置
+     * ------------------------------------------------------------------
+     * 两种机制本质不同，务必区分（火攻的「展示」不是「明置」）：
+     *
+     *   明置（revealed）—— 持续状态
+     *     牌翻开并**保持**公开，其他角色可随时观看。
+     *     由技能赋予/取消，是牌的一个属性。
+     *     失去明置的三种情况：
+     *       ① 被主动暗置
+     *       ② 被原持有者以外的角色获得（如顺手牵羊拿走）
+     *       ③ 移动到手牌区以外的区域
+     *
+     *   展示（shown）—— 瞬时动作
+     *     在结算过程中翻开给所有人看一次，随后自动合上。
+     *     如火攻：展示一张手牌，看完就恢复暗置。
+     *     不改变牌的持久状态。
+     * ------------------------------------------------------------------ */
+    this.revealed = false;    // 是否处于明置状态
+    this.revealOwner = null;  // 明置时的归属者（换手即失去明置）
+  }
+
+  /** 这张牌对 viewer 是否可见（内容能被看到） */
+  isVisibleTo(viewer) {
+    // 自己的牌永远可见
+    if (this.owner === viewer) return true;
+    // 不在手牌区的牌本来就是公开的（装备区、判定区、弃牌堆等）
+    if (this.zone !== ZONE.HAND) return true;
+    // 手牌：只有明置时他人才能看到
+    return this.revealed;
+  }
+
+  /** 赋予明置状态 */
+  setRevealed(on, by = null) {
+    this.revealed = !!on;
+    this.revealOwner = on ? (by || this.owner) : null;
+    return this;
+  }
+
+  /**
+   * 检查是否应当失去明置状态
+   * 在牌发生移动后调用。
+   */
+  checkRevealLost(newOwner) {
+    if (!this.revealed) return false;
+    // ① 离开手牌区 → 失去明置（装备区/弃牌堆的牌本来就是公开的）
+    if (this.zone !== ZONE.HAND) {
+      this.revealed = false;
+      this.revealOwner = null;
+      return true;
+    }
+    // ② 被原持有者以外的角色获得 → 失去明置
+    if (this.revealOwner && newOwner && newOwner !== this.revealOwner) {
+      this.revealed = false;
+      this.revealOwner = null;
+      return true;
+    }
+    return false;
   }
 
   get suitLabel() { return SUITS[this.suit] ? SUITS[this.suit].label : '?'; }
@@ -154,6 +213,13 @@ export class Player {
     if (zone.includes('j')) cards = cards.concat(this.judges);
     if (filter) cards = cards.filter((c) => (typeof filter === 'function' ? filter(c) : this.matchFilter(c, filter)));
     return cards;
+  }
+
+  /** 这张牌对 viewer 是否可见（Player 层便捷方法，等价于 Game.canSeeCard） */
+  canSeeCard(card, viewer) {
+    if (!viewer) return true;
+    if (viewer === this) return true;
+    return card.isVisibleTo(viewer);
   }
 
   matchFilter(card, filter) {
@@ -406,6 +472,13 @@ export class Game {
     this.over = false;
     this.onUpdate = () => {};
     this.pendingChoice = null;
+
+    /* 展示中（瞬时公开，区别于明置） */
+    this.showingCards = [];
+    this.showingBy = null;
+
+    /* 事件序列（供「使用/打出」分类与技能时机使用） */
+    this.useEvents = [];
   }
 
   /* ============================================================
@@ -486,6 +559,106 @@ export class Game {
     this.emit();
   }
 
+  /* ============================================================
+   * 可见性：明置 / 展示
+   * ============================================================
+   * 这两者本质不同，务必区分：
+   *
+   *   明置 reveal —— 持续状态
+   *     牌翻开并保持公开，直到被暗置、被他人获得、或离开手牌区。
+   *     失去明置的三种情况：
+   *       ① 被主动暗置（hideCards）
+   *       ② 被原持有者以外的角色获得（playerGain 里自动处理）
+   *       ③ 离开手牌区（同上）
+   *
+   *   展示 show —— 瞬时动作
+   *     结算过程中翻开一次给所有人看，看完即恢复。
+   *     例：【火攻】展示一张手牌 —— 看完就合上，不改变持久状态。
+   *     注意：展示 ≠ 明置，切勿混用。
+   * ============================================================ */
+
+  /**
+   * 某个 viewer 能不能看到这张牌的内容
+   * @param {Card} card
+   * @param {Player} viewer null = 上帝视角
+   */
+  canSeeCard(card, viewer) {
+    if (!card) return false;
+    if (!viewer) return true;
+    return card.isVisibleTo(viewer);
+  }
+
+  /**
+   * 按「可见性」取牌 —— 供 UI 与需要遵守信息隔离的逻辑使用
+   * viewer 能看到：非手牌区的牌、自己的手牌、他人的明置手牌。
+   * 看不到：他人的暗置手牌。
+   *
+   * @param {Player} target 牌的所有者
+   * @param {string} zone 区域，如 'he'
+   * @param {Player} viewer 观看者（null = 上帝视角）
+   * @returns {{visible: Card[], hidden: number}}
+   */
+  getVisibleCards(target, zone = 'he', viewer = null) {
+    const all = target.getCards(zone);
+    if (!viewer) return { visible: all, hidden: 0 };
+    const visible = [];
+    let hidden = 0;
+    for (const c of all) {
+      if (this.canSeeCard(c, viewer)) visible.push(c);
+      else hidden++;
+    }
+    return { visible, hidden };
+  }
+
+  /**
+   * 明置一张/多张牌（持续状态）
+   * @param {Card[]} cards
+   * @param {Player} by 因谁而明置（决定后续换手是否失去）
+   */
+  revealCards(cards, by = null) {
+    for (const c of this._asCardList(cards)) {
+      if (!c) continue;
+      c.setRevealed(true, by || c.owner);
+    }
+    this.emit();
+  }
+
+  /** 暗置（取消明置状态） */
+  hideCards(cards) {
+    for (const c of this._asCardList(cards)) {
+      if (!c) continue;
+      c.setRevealed(false);
+    }
+    this.emit();
+  }
+
+  /**
+   * 展示一张/多张牌（瞬时动作，如火攻）
+   * ------------------------------------------------------------------
+   * 仅把牌加入「当前展示中」列表供界面高亮，
+   * **不改变** revealed 状态；await 结束后自动合上。
+   *
+   * @param {Card[]} cards
+   * @param {Player} player 展示者
+   * @param {number} ms 展示时长（毫秒）
+   */
+  async showCards(cards, player, ms = 1500) {
+    const list = this._asCardList(cards);
+    this.showingCards = list.slice();
+    this.showingBy = player || null;
+    this.log(`${player ? player.name + ' ' : ''}展示了 ${list.map((c) => c.text).join('、')}`);
+    this.emit();
+    if (this.io && typeof this.io.sleep === 'function') await this.io.sleep(ms);
+    this.showingCards = [];
+    this.showingBy = null;
+    this.emit();
+  }
+
+  /** 当前正在展示中的牌（界面用） */
+  getShowingCards() {
+    return (this.showingCards || []).slice();
+  }
+
   emit() { this.onUpdate(); }
 
   log(text) {
@@ -550,6 +723,76 @@ export class Game {
   putOnDeckTop(cards) { this.deck.push(...cards.slice().reverse()); }
   putOnDeckBottom(cards) { this.deck.unshift(...cards.slice().reverse()); }
 
+  /* ============================================================
+   * 使用 / 打出 —— 语义区分
+   * ============================================================
+   * 这是规则的根基，务必严格区分：
+   *
+   *   使用（use）
+   *     出牌阶段主动使用一张牌，会**指定目标**并产生效果。
+   *     例：使用【杀】、【桃】、【无中生有】、【顺手牵羊】。
+   *     触发时机：cardUsed
+   *
+   *   打出（respond）
+   *     为响应某个事件而把牌丢出去，**不指定目标**、不产生自己的效果。
+   *     例：被【杀】时打出【闪】、被【南蛮】时打出【杀】、
+   *         被【决斗】时打出【杀】、为抵消锦囊而**打出**【无懈可击】。
+   *     触发时机：cardResponded
+   *
+   * 为方便技能编写，另提供 cardUsedOrResponded（两者都触发）。
+   * ============================================================ */
+
+  /**
+   * 记录一次「使用」并触发相关时机
+   * @param {Player} player 使用者
+   * @param {Card} card 被使用的牌
+   * @param {Player[]} targets 目标（可为空）
+   */
+  async emitCardUsed(player, card, targets = []) {
+    const ev = {
+      player, card, targets: targets || [], kind: 'use',
+    };
+    this.useEvents.push({ ...ev, turn: this.turnCount });
+    await this.checkSkills('cardUsed', ev);
+    await this.checkSkills('cardUsedOrResponded', ev);
+    // 「成为牌的目标」按每个目标分别触发
+    for (const t of (targets || [])) {
+      await this.checkSkills('cardTargeted', { player, card, target: t, targets });
+    }
+    return ev;
+  }
+
+  /**
+   * 记录一次「打出」并触发相关时机
+   * @param {Player} player 打出者
+   * @param {Card} card 被打出的牌
+   * @param {string} reason 打出原因（'shan' / 'sha' / 'wuxie' / ...）
+   */
+  async emitCardResponded(player, card, reason = '') {
+    const ev = { player, card, reason, kind: 'respond' };
+    this.useEvents.push({ ...ev, turn: this.turnCount });
+    await this.checkSkills('cardResponded', ev);
+    await this.checkSkills('cardUsedOrResponded', ev);
+    return ev;
+  }
+
+  /**
+   * 查询历史：某角色本回合是否「使用」过某张牌
+   * 供后续技能使用（如「本回合使用过杀的角色」）
+   */
+  getUseHistory(player, filter) {
+    return this.useEvents.filter((e) => e.kind === 'use'
+      && (!player || e.player === player)
+      && (!filter || filter(e)));
+  }
+
+  /** 查询历史：某角色本回合是否「打出」过某张牌 */
+  getRespondHistory(player, filter) {
+    return this.useEvents.filter((e) => e.kind === 'respond'
+      && (!player || e.player === player)
+      && (!filter || filter(e)));
+  }
+
   reshuffle() {
     if (!this.discardPile.length) return;
     this.log('牌堆已重洗');
@@ -561,6 +804,19 @@ export class Game {
   /* ---------------- 摸牌 / 获得 ---------------- */
   async playerGain(player, cards, from) {
     for (const c of cards) {
+      // 被原持有者以外的角色获得 → 失去明置状态
+      c.checkRevealLost(player);
+      // 从原区域移除（避免同一张牌同时存在于多处）
+      for (const p of this.players) {
+        const hi = p.hand.indexOf(c);
+        if (hi >= 0) p.hand.splice(hi, 1);
+        const ji = p.judges.indexOf(c);
+        if (ji >= 0) p.judges.splice(ji, 1);
+        for (const k of Object.keys(p.equips)) {
+          if (p.equips[k] === c) p.equips[k] = null;
+        }
+      }
+      this._removeFromPiles(c);
       c.zone = 'hand';
       c.owner = player;
       player.hand.push(c);
@@ -616,6 +872,18 @@ export class Game {
       // 使用牌 → 归属为使用者
       case 'cardUsed':
         return event.player === owner;
+
+      // 打出牌 → 归属为打出者
+      case 'cardResponded':
+        return event.player === owner;
+
+      // 使用或打出 → 两者都触发
+      case 'cardUsedOrResponded':
+        return event.player === owner;
+
+      // 成为牌的目标 → 归属为目标
+      case 'cardTargeted':
+        return (event.targets || []).includes(owner);
 
       // 指定目标后 → 归属为【杀】的来源
       case 'targetConfirm':
@@ -1249,7 +1517,7 @@ export class Game {
         this.emit();
         return;
       }
-      await this.checkSkills('cardUsed', { player, card, targets });
+      await this.emitCardUsed(player, card, targets);
       await this.equipCard(player, card);
       return;
     }
@@ -1267,7 +1535,7 @@ export class Game {
     // 记录出杀次数
     if (card.name === 'sha') player.addFlag('usedShaThisTurn', (player.flags.usedShaThisTurn || 0) + 1);
 
-    await this.checkSkills('cardUsed', { player, card, targets });
+    await this.emitCardUsed(player, card, targets);
     this.emit();
 
     // 无懈可击检查（锦囊）
@@ -1368,40 +1636,70 @@ export class Game {
     if (ci >= 0) this.centerZone.splice(ci, 1);
   }
 
-  /* ---------------- 无懈可击 ---------------- */
+  /* ---------------- 无懈可击 ----------------
+   * 规则要点（与「使用」区分）：
+   *   ① 无懈可击是**打出**，不是使用 —— 它不指定角色目标。
+   *   ② 它的目标是**一张牌**（正在结算的那张锦囊），不是角色。
+   *      这一点对后续技能很关键：判断一个角色「是否成为某张牌的目标」
+   *      时，无懈的目标应当记为那张锦囊牌本身。
+   *   ③ 可以连锁：无懈抵消无懈，如此反复。
+   * ------------------------------------------------------------ */
   async checkWuxie(source, card, targets) {
     let nullified = false;
     let guard = 0;
+    // 记录本张牌上打出的所有无懈，供后续技能查询
+    const wuxieChain = [];
+
     while (guard++ < 10) {
       let someone = false;
       for (const p of this.players) {
         if (!p.alive) continue;
         const wuxies = p.getCards('he', (c) => c.name === 'wuxie');
         if (!wuxies.length) continue;
-        let use = false;
+
+        // 目标描述：无懈的目标是「牌」而非角色
+        const targetCard = wuxieChain.length ? wuxieChain[wuxieChain.length - 1] : card;
+
+        let want = false;
         if (p.isHuman) {
-          use = await this.io.askWuxie(p, source, card, nullified);
+          want = await this.io.askWuxie(p, source, targetCard, nullified);
         } else {
-          use = this.ai.shouldWuxie(p, source, card, nullified);
+          want = this.ai.shouldWuxie(p, source, targetCard, nullified);
         }
-        if (!use) continue;
-        const picked = p.isHuman
-          ? (await this.io.chooseCards(p, {
-            prompt: '使用【无懈可击】', position: 'he', min: 1, max: 1,
+        if (!want) continue;
+
+        let picked;
+        if (p.isHuman) {
+          picked = (await this.io.chooseCards(p, {
+            prompt: `打出【无懈可击】抵消【${targetCard.fullname}】`,
+            position: 'he', min: 1, max: 1,
             filter: (c) => c.name === 'wuxie', cancelable: true,
-          })) || []
-          : [wuxies[0]];
+          })) || [];
+        } else {
+          picked = [wuxies[0]];
+        }
         if (!picked.length) continue;
+
         await p.loseCards(picked);
-        this.toDiscard(...picked);
+        this.toCenter(picked);
+
+        const wuxieCard = picked[0];
+        wuxieChain.push(wuxieCard);
         nullified = !nullified;
-        this.log(`${p.name} 使用【无懈可击】${nullified ? '抵消' : '反抵消'}【${card.fullname}】`);
+
+        // 归类为「打出」，并记录其目标为「牌」
+        await this.emitCardResponded(p, wuxieCard, 'wuxie');
+        this.useEvents[this.useEvents.length - 1].targetCard = targetCard;
+
+        this.log(`${p.name} 打出【无懈可击】${nullified ? '抵消' : '反抵消'}`
+          + `【${targetCard.fullname}】`);
         this.emit();
         someone = true;
         break;
       }
       if (!someone) break;
     }
+    card.wuxieChain = wuxieChain;
     return nullified;
   }
 
@@ -1505,14 +1803,16 @@ export class Game {
       });
       if (!picked || !picked.length) return false;
       await target.loseCards(picked);
-      this.toDiscard(...picked);
+      this.toCenter(picked);
+      await this.emitCardResponded(target, picked[0], 'shan');
       this.log(`${target.name} 打出【闪】${asQingguo ? '（倾国）' : ''}`);
       return true;
     }
     if (this.ai.shouldRespondShan(target, source, card)) {
       const c = candidates[0];
       await target.loseCards([c]);
-      this.toDiscard(c);
+      this.toCenter(c);
+      await this.emitCardResponded(target, c, 'shan');
       this.log(`${target.name} 打出【闪】${asQingguo ? '（倾国）' : ''}`);
       return true;
     }
@@ -1606,14 +1906,16 @@ export class Game {
       });
       if (!picked || !picked.length) return false;
       await player.loseCards(picked);
-      this.toDiscard(...picked);
+      this.toCenter(picked);
+      await this.emitCardResponded(player, picked[0], reason);
       this.log(`${player.name} 打出【杀】${viaSkill ? `（${SKILLS[viaSkill].name}）` : ''}`);
       return true;
     }
     if (this.ai.shouldRespondSha(player, opponent)) {
       const c = cards[0];
       await player.loseCards([c]);
-      this.toDiscard(c);
+      this.toCenter(c);
+      await this.emitCardResponded(player, c, reason);
       this.log(`${player.name} 打出【杀】${viaSkill ? `（${SKILLS[viaSkill].name}）` : ''}`);
       return true;
     }

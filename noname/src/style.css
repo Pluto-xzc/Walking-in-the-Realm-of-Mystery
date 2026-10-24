@@ -368,6 +368,92 @@ html, body {
   .sgs-equip-slot { width: 62px; min-height: 84px; flex-shrink: 0; }
 }
 
+/* ==========================================================================
+   暗置牌（背面）
+   ========================================================================== */
+.sgs-card.sgs-card-hidden {
+  cursor: pointer;
+}
+.sgs-card.sgs-card-hidden .card-back {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    repeating-linear-gradient(45deg,
+      rgba(0,0,0,0.16), rgba(0,0,0,0.16) 5px,
+      transparent 5px, transparent 10px),
+    linear-gradient(160deg, #6b4a2f, #422c1a);
+  border-radius: inherit;
+}
+.sgs-card.sgs-card-hidden .card-back-mark {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 26px;
+  font-weight: 700;
+  color: rgba(232, 196, 90, 0.75);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+}
+.sgs-card.sgs-card-hidden.selectable:hover {
+  box-shadow: 0 0 0 3px var(--gold-light), 0 6px 16px rgba(0,0,0,0.5);
+}
+
+/* ==========================================================================
+   中央区 / 弃牌堆面板
+   ========================================================================== */
+.sgs-pile-panel.hidden { display: none; }
+
+/* 面板底部说明文字 */
+.sgs-pile-tip {
+  margin-top: 12px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #9a8b78;
+  background: rgba(245, 239, 228, 0.05);
+  border-left: 2px solid rgba(212, 160, 23, 0.4);
+  border-radius: 3px;
+}
+
+/* ==========================================================================
+   竖屏遮罩（手机强制横屏）
+   ========================================================================== */
+.sgs-rotate-overlay {
+  display: none;              /* 默认隐藏，由媒体查询打开 */
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  background: #14100d;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+.sgs-rotate-inner { max-width: 320px; }
+.sgs-rotate-icon {
+  font-size: 52px;
+  margin-bottom: 16px;
+  animation: sgs-rotate-hint 2s ease-in-out infinite;
+}
+@keyframes sgs-rotate-hint {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-90deg); }
+}
+.sgs-rotate-title {
+  font-family: "KaiTi", "STKaiti", serif;
+  font-size: 22px;
+  color: var(--gold-light);
+  margin-bottom: 10px;
+  letter-spacing: 2px;
+}
+.sgs-rotate-sub {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #9a8b78;
+}
+
+/* 仅在「窄屏 + 竖屏」时显示遮罩 */
+@media (orientation: portrait) and (max-width: 900px) {
+  .sgs-rotate-overlay { display: flex; }
+}
+
 /* 牌池选择提示（五谷丰登等） */
 .sgs-pool-label {
   font-size: 12px;
