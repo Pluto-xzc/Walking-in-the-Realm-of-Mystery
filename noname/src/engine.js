@@ -351,6 +351,95 @@ export class Player {
     return cards;
   }
 
+  /* ============================================================
+   * 「手牌与体力等价」机制（本项目自定义，按用户给定规则实现）
+   * ============================================================
+   * 持有该机制的角色（通常是锁定技/状态技）在「摸牌 / 弃牌」时，
+   * 可以选择改为不摸/不弃，而做等量的体力「增加 / 减小」。
+   *
+   * 结算要点（严格按用户规则）：
+   *   ① 该结算「仅视为摸牌/弃牌」，**不视为回复体力**。
+   *      因此不触发「回复体力」类时机与技能。
+   *   ② 反之亦然：用体力换牌时，视为弃牌，不视为失去体力。
+   *      因此【绝情】这类「伤害视为失去体力」的机制不参与，
+   *      护甲与「空上限当护甲」也不会抵挡它（它不是伤害）。
+   *   ③ 弃牌阶段的弃牌可以「一次性」用扣血/扣部分血 + 弃部分牌
+   *      来凑够应弃数量。
+   * ============================================================ */
+
+  /** 该角色是否持有「手牌与体力等价」机制 */
+  hasHpCardExchange() {
+    if (this.flags && this.flags.hpCardExchange) return true;
+    return this.hasSkill('hp_card_exchange');
+  }
+
+  /**
+   * 「摸牌」改为「增加体力」
+   * 只增加体力上限 AllowUp 内的部分；返回实际增加量。
+   * 注意：仅视为摸牌，不视为回复体力 —— 故不走 recover()。
+   */
+  async drawAsHp(n) {
+    if (!this.alive || n <= 0) return 0;
+    const before = this.hp;
+    this.hp = Math.min(this.maxHp, this.hp + n);
+    const gained = this.hp - before;
+    if (gained > 0) {
+      this.game.log(`${this.name} 将 ${gained} 张摸牌改为增加 ${gained} 点体力`
+        + `（视为摸牌；${this.hp}/${this.maxHp}）`);
+      this.game.emit();
+      // 仅视为摸牌：沿用 drawEnd 时机，num 记实际增加量
+      await this.game.checkSkills('drawEnd', { player: this, num: gained, asHp: true });
+    } else {
+      this.game.log(`${this.name} 体力已满，改为增加体力的摸牌无效果`);
+    }
+    return gained;
+  }
+
+  /**
+   * 将「体力」当作「弃牌」支付
+   * 每 1 点体力抵 1 张应弃的牌；返回实际抵扣的牌数。
+   * 不视为失去体力，因此不会触发濒死以外的伤害/流失相关机制。
+   */
+  async payDiscardWithHp(count) {
+    if (!this.alive || count <= 0) return 0;
+    const pay = Math.min(count, this.hp);
+    if (pay <= 0) return 0;
+    this.hp -= pay;
+    this.game.log(`${this.name} 以 ${pay} 点体力代替弃置 ${pay} 张牌`
+      + `（视为弃牌；${this.hp}/${this.maxHp}）`);
+    this.game.emit();
+    if (this.hp <= 0) await this.game.enterDying(this);
+    return pay;
+  }
+
+  /**
+   * 弃牌阶段的「等价支付」
+   * ------------------------------------------------------------------
+   * excess 张应弃牌，可拆分为：
+   *   弃置 k 张手牌 + 扣 (excess - k) 点体力
+   * AI 与玩家都可选择；不持有该机制时直接返回 null 表示不适用。
+   *
+   * @returns {Promise<{cards:number, hp:number}|null>}
+   */
+  async chooseDiscardSplit(excess) {
+    if (!this.hasHpCardExchange() || excess <= 0) return null;
+    const maxHpPay = Math.min(excess, Math.max(0, this.hp - 1)); // 至少保留 1 点体力
+    if (maxHpPay <= 0) return null;
+    const canDiscard = Math.min(excess, this.hand.length);
+    // 可选的「扣体力数」范围：0 .. maxHpPay，且需满足 弃牌数 + 扣血数 = excess
+    const minPay = Math.max(0, excess - canDiscard);
+    if (maxHpPay < minPay) return null;   // 想全用体力也不够，无法凑齐
+
+    if (!this.isHuman) {
+      // AI：优先弃牌，体力不足时才用体力补
+      const hpPay = minPay;
+      return { cards: excess - hpPay, hp: hpPay };
+    }
+
+    const hpPay = await this.game.io.chooseHpPayment(this, excess, minPay, maxHpPay);
+    return { cards: excess - (hpPay || 0), hp: hpPay || 0 };
+  }
+
   async loseCards(cards, zone) {
     for (const c of (cards || [])) {
       // 防御：跳过空项（调用方可能传入未找到的牌）
@@ -1062,13 +1151,24 @@ export class Game {
         // ② 装备技：必须确实装备着对应装备
         if (sk.equip && !this.playerHasEquipSkill(p, sid)) continue;
 
-        // ③ 技能自身的 filter
+        // ③ 「不能因此发动技能」闸门（参考无名杀 event._notrigger）
+        //    注意：只有 type === 'trigger' 的技能会走到这里，
+        //    永续效果（type === 'mod'，如仁王盾）根本不在本循环内，
+        //    因此它们天然不受此类机制影响 —— 与无名杀一致。
+        if (this.isSkillBlocked(p, sk, event)) continue;
+
+        // ③.5 「牌无视技能」闸门：按结算阶段切断
+        //     只屏蔽截止阶段及更早的触发技，之后的阶段照常。
+        //     同样地，mod 类永续效果不受影响（不在本循环内）。
+        if (this.isStageIgnored(event, timing)) continue;
+
+        // ④ 技能自身的 filter
         const ctx = { player: p, game: this, event, skill: sk };
         let ok = true;
         try { ok = sk.filter ? sk.filter(ctx) : true; } catch { ok = false; }
         if (!ok) continue;
 
-        // ④ 询问是否发动
+        // ⑤ 询问是否发动
         const willUse = await this.io.askSkill(p, sk, ctx);
         if (willUse) {
           this.log(`${p.name} 发动【${sk.name}】`);
@@ -1077,6 +1177,131 @@ export class Game {
       }
     }
     this.emit();
+  }
+
+  /* ============================================================
+   * 「不能因此发动技能」机制
+   * ============================================================
+   * 对应无名杀：
+   *   - lib.filter.filterTrigger（library/index.js）里的
+   *     `event._notrigger.includes(player)` 判定
+   *   - GameEvent.untrigger(false, player) 把角色加入 _notrigger
+   *     （library/element/gameEvent.js）
+   *
+   * 关键语义（务必保持）：
+   *   该机制只作用于「触发技」。无名杀 filterTrigger 开头就有
+   *   `if (!info.trigger) return false;`，说明「没有 trigger 字段的
+   *   技能」压根不参与触发询问，也就无从被封锁。
+   *
+   *   因此「永续效果」（本项目的 type === 'mod'，例如仁王盾的
+   *   黑色【杀】无效）不受此机制影响：它是在 isImmune 等处直接
+   *   读取的规则修改，而不是一次「发动」。
+   *   这正是用户要求的「若目标想要生效的效果为永续效果，则不受
+   *   『不能因此发动技能』类机制影响」。
+   * ============================================================ */
+
+  /**
+   * 某角色是否在当前事件中被禁止发动触发技
+   * @param {Player} player
+   * @param {object} event
+   */
+  isSkillBlocked(player, skill, event) {
+    if (!event) return false;
+    // 该事件上登记了「不能发动技能」的角色
+    if (Array.isArray(event.noTriggerPlayers) && event.noTriggerPlayers.includes(player)) {
+      return true;
+    }
+    // 事件被整体标记为不触发技能
+    if (event.noTrigger === true) return true;
+    // 角色自身被标记（如某技能令其本回合不能发动技能）
+    if (player.flags && player.flags.noTriggerSkills) return true;
+    return false;
+  }
+
+  /**
+   * 令某角色在当前事件中不能发动技能
+   * 参考无名杀 `event.untrigger(false, player)`
+   */
+  blockSkills(event, player) {
+    if (!event) return;
+    if (!Array.isArray(event.noTriggerPlayers)) event.noTriggerPlayers = [];
+    if (!event.noTriggerPlayers.includes(player)) event.noTriggerPlayers.push(player);
+  }
+
+  /**
+   * 令当前事件整体不触发任何技能
+   * 参考无名杀 `event.untrigger()` / damage(..., 'notrigger')
+   */
+  blockAllSkills(event) {
+    if (event) event.noTrigger = true;
+  }
+
+  /* ============================================================
+   * 「牌无视技能」机制
+   * ============================================================
+   * 对应无名杀：卡牌/效果令某些技能在本次结算中不生效。
+   *
+   * 结算阶段顺序（参考无名杀的 trigger 调用顺序，
+   * 见 library/element/content.js 的 useCard / damage 内容函数）：
+   *
+   *   ① 指定目标时      targetConfirm      （如铁骑、雌雄双股剑）
+   *   ② 成为目标时      targeted           （如流离的触发前提）
+   *   ③ 指定目标后      targetConfirm
+   *   ④ 成为目标后      cardTargeted
+   *   ⑤ 使用牌时        cardUsed           （如集智）
+   *   ⑥ 造成伤害时      damageBegin        （如藤甲、裸衣）
+   *   ⑦ 受到伤害时      damageBegin
+   *   ⑧ 造成伤害后      damageEnd
+   *   ⑨ 受到伤害后      damageEnd          （如奸雄、反馈、刚烈）
+   *   ⑩ 使用牌后        cardUsedAfter
+   *   ⑪ 结算后          cardResolved
+   *
+   * 关键语义：「部分内容的无视技能只能无视首行的有关内容。」
+   * 即无视是**按阶段切断**的 —— 一个「无视技能」效果只屏蔽它
+   * 所声明范围内（通常是最前面几个阶段）的技能，不会一路屏蔽到
+   * 结算末尾。因此本实现在事件上记录一个「截止阶段」，
+   * 在 checkSkills 里按阶段序号比较决定是否放行。
+   * ============================================================ */
+
+  /** 牌结算阶段的先后次序（数值越小越靠前） */
+  static get STAGE_ORDER() {
+    return {
+      targetConfirm: 1,     // ① 指定目标时 / ③ 指定目标后
+      targeted: 2,          // ② 成为目标时
+      cardTargeted: 4,      // ④ 成为目标后
+      cardUsed: 5,          // ⑤ 使用牌时
+      damageBegin: 6,       // ⑥⑦ 造成/受到伤害时
+      damageEnd: 8,         // ⑧⑨ 造成/受到伤害后
+      cardUsedAfter: 10,    // ⑩ 使用牌后
+      cardResolved: 11,     // ⑪ 结算后
+    };
+  }
+
+  /** 取某时机的阶段序号；未登记的时机视为「最后」（不受无视影响） */
+  stageIndex(timing) {
+    const o = Game.STAGE_ORDER;
+    return Object.prototype.hasOwnProperty.call(o, timing) ? o[timing] : 99;
+  }
+
+  /**
+   * 令本次结算「无视技能」，直到（含）某阶段为止
+   * 参考无名杀「此牌无视技能」类效果。
+   *
+   * @param {object} event   结算事件
+   * @param {string} untilStage 截止阶段名（含）。此阶段及更早的
+   *        触发技都会被无视；更晚的阶段恢复正常。
+   */
+  ignoreSkillsUntil(event, untilStage) {
+    if (!event) return;
+    event.ignoreSkillsUntil = this.stageIndex(untilStage);
+  }
+
+  /**
+   * 本次结算的某时机是否处于「被无视」范围内
+   */
+  isStageIgnored(event, timing) {
+    if (!event || typeof event.ignoreSkillsUntil !== 'number') return false;
+    return this.stageIndex(timing) <= event.ignoreSkillsUntil;
   }
 
   playerHasEquipSkill(p, sid) {
@@ -1207,7 +1432,7 @@ export class Game {
 
   /* ---------------- 伤害 ---------------- */
   async doDamage(target, num, source, skill, card, nature = null) {
-    if (!target.alive || this.over) return;
+    if (!target.alive || this.over) return null;
 
     // 属性来源：显式传入 > 牌的属性 > 无
     const dmgNature = nature || (card && card.nature) || null;
@@ -1224,7 +1449,7 @@ export class Game {
       const immune = this.isImmune(target, card);
       if (immune) {
         this.log(`${target.name} 因装备效果免疫了【${card.fullname}】`);
-        return;
+        return ev;
       }
     }
 
@@ -1255,19 +1480,19 @@ export class Game {
 
     // damageBegin 时机（技能可在此 prevent 或继续改数值）
     await this.checkSkills('damageBegin', ev);
-    if (ev.prevented) { this.emit(); return; }
+    if (ev.prevented) { this.emit(); return ev; }
     ev.num = Math.max(0, ev.num);
-    if (ev.num === 0) { this.emit(); return; }
+    if (ev.num === 0) { this.emit(); return ev; }
 
     // ---------- 第二级：最终伤害修改 ----------
     await this.applyFinalDamageModify(ev);
     ev.num = Math.max(0, ev.num);
-    if (ev.num === 0) { this.emit(); return; }
+    if (ev.num === 0) { this.emit(); return ev; }
 
     // ---------- 第三级：特殊裁定（白银狮子等），永远最后 ----------
     await this.applyFinalDamage(ev);
     ev.num = Math.max(0, ev.num);
-    if (ev.num === 0) { this.emit(); return; }
+    if (ev.num === 0) { this.emit(); return ev; }
 
     // 铁索连环：记录本次属性伤害，随后传导给其他横置角色
     const chainTargets = [];
@@ -1302,10 +1527,47 @@ export class Game {
       this.log(`${target.name} 的护甲抵挡了 ${blocked} 点伤害（剩余护甲 ${target.hujia}）`);
     }
 
+    /* ============================================================
+     * 「空上限视为护甲」机制（本项目自定义，无无名杀对应）
+     * ============================================================
+     * 持有该机制的角色（通常是锁定技效果），其「空掉的体力上限」
+     * 即 `maxHp - hp` 会像护甲一样优先吸收伤害。
+     *
+     * 规则：
+     *   吸收量 = min(剩余伤害, maxHp - hp)
+     *   只扣减 hp 的那部分才真正掉血；被吸收的部分
+     *   **既不增加护甲、也不改变 maxHp**。
+     *
+     * 因此 maxHp 与 hujia 在此机制下始终不变：
+     *   4/4 挨 3 点 → 空上限为 0，全额掉血 → 1/4（空上限变为 3）
+     *   1/4 再挨 2 点 → 空上限 3 吸收全部 2 点 → 仍是 1/4
+     *
+     * 与护甲的顺序：真实护甲先扣（它是实打实的资源），
+     * 之后才动用「空上限」。两者都不影响手牌上限。
+     *
+     * 注意：只用 maxHp - hp，不碰 maxHp 本身；回血照常受
+     * maxHp 限制，被当作护甲用掉的空上限不会自动回来。
+     * ============================================================ */
+    let headroomAbsorbed = 0;
+    if (hpLoss > 0 && target.hasSkill('voidhp_armor')) {
+      const headroom = Math.max(0, target.maxHp - target.hp);
+      if (headroom > 0) {
+        headroomAbsorbed = Math.min(hpLoss, headroom);
+        hpLoss -= headroomAbsorbed;
+        ev.headroomBlocked = headroomAbsorbed;   // 供后续技能与测试读取
+        ev.headroomBefore = headroom;
+        this.log(`${target.name} 以空余体力上限抵当了 ${headroomAbsorbed} 点伤害`
+          + `（空上限 ${headroom - headroomAbsorbed}）`);
+      }
+    }
+    ev.hpLoss = hpLoss;   // 实际扣减的体力（供技能/测试读取）
+
     target.hp -= hpLoss;
     const natureText = dmgNature === 'fire' ? '火焰' : dmgNature === 'thunder' ? '雷电' : '';
     if (hpLoss > 0) {
       this.log(`${target.name} 受到 ${hpLoss} 点${natureText}伤害（${target.hp}/${target.maxHp}）${source ? `，来源：${source.name}` : ''}`);
+    } else if (headroomAbsorbed > 0) {
+      this.log(`${target.name} 的空余体力上限完全抵当了这次伤害（${target.hp}/${target.maxHp}）`);
     } else {
       this.log(`${target.name} 的护甲完全抵挡了这次伤害`);
     }
@@ -1326,6 +1588,7 @@ export class Game {
         await this.doDamage(p, ev.num, source, 'tiesuo', null, dmgNature);
       }
     }
+    return ev;
   }
 
   /* ============================================================
@@ -1961,10 +2224,26 @@ export class Game {
 
     const limit = Math.max(0, player.hp);
     const excess = player.hand.length - limit;
-    if (excess > 0) {
-      this.log(`${player.name} 需弃置 ${excess} 张牌（手牌上限 ${limit}）`);
-      await player.discardCards(excess, 'h', `弃牌阶段：弃置 ${excess} 张手牌`);
+    if (excess <= 0) return;
+
+    this.log(`${player.name} 需弃置 ${excess} 张牌（手牌上限 ${limit}）`);
+
+    // 「手牌与体力等价」：可用体力代替部分/全部弃牌
+    const split = await player.chooseDiscardSplit(excess);
+    if (split) {
+      const { cards: nCards, hp: nHp } = split;
+      if (nHp > 0) await player.payDiscardWithHp(nHp);
+      if (!player.alive) return;
+      if (nCards > 0) {
+        await player.discardCards(nCards, 'h',
+          `弃牌阶段：以体力代替 ${nHp} 张，还需弃置 ${nCards} 张手牌`);
+      } else {
+        this.log(`${player.name} 完全以体力完成了本次弃牌`);
+      }
+      return;
     }
+
+    await player.discardCards(excess, 'h', `弃牌阶段：弃置 ${excess} 张手牌`);
   }
 
   /* ============================================================

@@ -915,6 +915,15 @@ html, body {
   width: min(92vw, 620px);
 }
 
+/*
+  提示条
+  ------------------------------------------------------------------
+  ⚠️ 这里**不能**用 position:absolute + 居中：那个样式原本是给
+  牌桌中央的提示用的，若套到「自己区域」的提示条上，就会飘到
+  屏幕中间而不是紧贴手牌区。
+  现在提示条是普通文档流元素，由 .sgs-self > .sgs-prompt 的
+  margin-top:auto 推到手牌正上方。
+*/
 .sgs-prompt {
   padding: 10px 22px;
   background: rgba(20, 16, 13, 0.92);
@@ -1071,6 +1080,46 @@ html, body {
 
 .sgs-self-top {
   display: flex; align-items: center; gap: 12px;
+}
+
+/*
+  武将信息右侧的「选项按钮区」
+  ------------------------------------------------------------------
+  名字/体力之后原本有一大片空白，确认按钮（发动/不发动、确定/取消 等）
+  放在这里既填满空位，又让确认操作紧靠角色信息，不再飘在屏幕中间。
+  加了 margin-left:auto 之前它是紧跟 .sgs-self-info 的，所以用 auto 靠右。
+*/
+.sgs-self-info-actions {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: auto;          /* 推到整行最右 */
+  padding-right: 4px;
+  flex-wrap: wrap;
+}
+.sgs-self-info-actions:empty { display: none; }
+.sgs-self-info-actions .sgs-act-btn {
+  font-size: 13px; padding: 7px 16px;
+  white-space: nowrap;
+}
+
+/*
+  自己区域的提示条
+  ------------------------------------------------------------------
+  需求：紧贴手牌区的上端。
+  .sgs-self 是 flex 纵向布局且 justify-content: flex-end，
+  用 margin-top: auto 把提示条推到「手牌区正上方」，
+  中间不会被撑开留白。
+*/
+.sgs-self > .sgs-prompt {
+  margin-top: auto;
+  margin-bottom: 0;
+  align-self: stretch;
+  padding: 7px 14px;
+  font-size: 13px; line-height: 1.5;
+}
+
+/* 自己区域的操作按钮行（若仍在使用） */
+.sgs-self > .sgs-actions {
+  margin-top: 0;
 }
 
 /* 自己区域的信息块：名字行 / 体力行 / 技能按钮 */

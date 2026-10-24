@@ -519,9 +519,14 @@ export class UI {
       </div>
       <div class="sgs-board">
         <div class="sgs-opponents" id="sgs-opponents"></div>
-        <div class="sgs-center">
-          <div class="sgs-prompt hidden" id="sgs-prompt"></div>
-        </div>
+        <!--
+          注意：这里**不要**再放 id="sgs-prompt"。
+          提示条只有一个，位于自己区域内、紧贴手牌区上端
+          （见下方 .sgs-self 里的同名 class 元素）。
+          历史上这里曾有一个副本，导致 document.getElementById('sgs-prompt')
+          取到的是屏幕中央这一份，提示框因此「飘」在牌桌中间而不是手牌上方。
+        -->
+        <div class="sgs-center"></div>
         <div class="sgs-log-panel" id="sgs-log"></div>
         <div class="sgs-pile-panel hidden" id="sgs-pile"></div>
         <div class="sgs-pile-panel hidden" id="sgs-center-panel"></div>
@@ -548,12 +553,21 @@ export class UI {
             <!-- 技能按钮：可点击发动 -->
             <div class="sgs-skill-btns" id="sgs-self-skills"></div>
           </div>
+          <!--
+            选项按钮区：位于武将信息**右侧**的空白处。
+            名字/体力之后的横向空白用来放「发动 / 不发动」这类按钮，
+            既填满了空位，又让确认操作靠近角色信息、远离手牌。
+          -->
+          <div class="sgs-self-info-actions" id="sgs-self-info-actions"></div>
         </div>
 
         <!-- 结束回合按钮：独立一行，位于武将信息下方 -->
         <div class="sgs-endturn-row" id="sgs-endturn-row"></div>
 
-        <!-- 提示条与操作按钮：紧贴手牌区上方 -->
+        <!--
+          提示条与操作按钮：紧贴手牌区上端。
+          .sgs-prompt 通过 CSS 的 margin-top:auto 被推到手牌正上方。
+        -->
         <div class="sgs-prompt hidden" id="sgs-prompt"></div>
         <div class="sgs-actions" id="sgs-actions"></div>
         <div class="sgs-select-hint" id="sgs-select-hint">
@@ -1983,9 +1997,49 @@ export class UI {
   }
 
   /**
-   * 选项式选择（如刚烈：弃牌 or 受伤）
+   * 「手牌与体力等价」：弃牌阶段用多少点体力代替弃牌
+   * ----------------------------------------------------------------
+   * 需要在 [minPay, maxPay] 之间选一个数；其余张数用手牌弃置。
+   * 返回实际选择的扣体力数。
    */
-  chooseOption(player, prompt, options) {
+  chooseHpPayment(player, excess, minPay, maxPay) {
+    return new Promise((resolve) => {
+      if (!player.isHuman) { resolve(minPay); return; }
+      this.mode = 'confirm';
+      const wrap = $('#sgs-actions');
+      wrap.innerHTML = '';
+      const prompt = `弃牌阶段：需弃置 ${excess} 张。`
+        + `可用体力代替（每 1 点体力抵 1 张），请选择扣减几点体力：`;
+      this.setPrompt(prompt);
+
+      for (let n = minPay; n <= maxPay; n++) {
+        const label = n === 0
+          ? `0 点（弃 ${excess} 张手牌）`
+          : `${n} 点体力（弃 ${excess - n} 张手牌）`;
+        const b = el('button', 'sgs-act-btn primary', label);
+        b.onclick = () => {
+          wrap.innerHTML = '';
+          this.mode = null;
+          this.setPrompt('');
+          resolve(n);
+        };
+        wrap.appendChild(b);
+      }
+    });
+  }
+
+  /**
+   * 选项式选择（如刚烈：弃牌 or 受伤 / 是否发动技能）
+   * ----------------------------------------------------------------
+   * 布局（按需求调整）：
+   *   · 提示文字 → 显示在「紧贴手牌区上端」的提示条里
+   *   · 选项按钮 → 渲染到武将信息行（名字/体力）**后面**的空白处，
+   *     这样信息行右侧不再空着，视觉上也更紧凑美观
+   *
+   * @param {object} [opts]
+   * @param {object} [opts.skill] 若因技能而询问，按钮上可挂技能引用
+   */
+  chooseOption(player, prompt, options, opts = {}) {
     return new Promise((resolve) => {
       if (!player.isHuman) {
         // AI 简单策略
@@ -1998,15 +2052,23 @@ export class UI {
       }
       this.mode = 'confirm';
       this.promptText = prompt;
-      const wrap = $('#sgs-actions');
+
+      // 按钮挂在武将信息行右侧
+      const wrap = $('#sgs-self-info-actions') || $('#sgs-actions');
       wrap.innerHTML = '';
       this.setPrompt(prompt);
+
+      const cleanup = () => {
+        wrap.innerHTML = '';
+        this.mode = null;
+        this.setPrompt('');
+      };
+
       options.forEach((o) => {
         const b = el('button', 'sgs-act-btn primary', o.label);
+        if (opts.skill) b.dataset.skillId = opts.skill.id;
         b.onclick = () => {
-          wrap.innerHTML = '';
-          this.mode = null;
-          this.setPrompt('');
+          cleanup();
           resolve(o.key);
         };
         wrap.appendChild(b);
@@ -2016,16 +2078,47 @@ export class UI {
 
   /**
    * 是否发动技能
+   * ----------------------------------------------------------------
+   * 规则（与无名杀一致，见 get.is.locked / content.js createTrigger）：
+   *   - 必发效果（锁定技 / forced）**不询问**，直接发动。
+   *   - 其余一律弹出确认框，且框内必须带上是哪个技能。
+   *
+   * 无名杀的判定顺序（get.is.locked，noname/get/is.js）：
+   *   info.locked 为函数 → 用其返回值
+   *   info.locked === false → 非锁定
+   *   info.trigger && info.forced → 锁定（触发型必发）
+   *   info.mod → 锁定（规则修改/永续效果）
+   *   info.locked 其余真值 → 锁定
+   *
+   * 本项目对应：skill.locked / skill.forced / type === 'mod'。
    */
+  isSkillForced(skill) {
+    if (!skill) return false;
+    if (typeof skill.locked === 'function') return !!skill.locked();
+    if (skill.locked === false) return false;
+    if (skill.forced) return true;
+    if (skill.trigger && skill.forced) return true;
+    if (skill.type === 'mod') return true;
+    return !!skill.locked;
+  }
+
   async askSkill(player, skill, ctx) {
     if (!player.isHuman) {
       return this.game.ai.decideSkill(player, skill, ctx);
     }
-    if (skill.locked || skill.forced) return true;
-    const use = await this.chooseOption(player, `是否发动【${skill.name}】？`, [
-      { key: 'yes', label: `发动【${skill.name}】` },
+    // 必发效果直接生效，不询问
+    if (this.isSkillForced(skill)) return true;
+
+    // 确认框写明「是哪个技能」并附上该技能的**描述**
+    // 例：是否发动【奸雄】？（当你受到伤害后，你可以获得对你造成伤害的牌。）
+    const desc = (skill.desc || '').trim();
+    const prompt = desc
+      ? `是否发动【${skill.name}】？（${desc}）`
+      : `是否发动【${skill.name}】？`;
+    const use = await this.chooseOption(player, prompt, [
+      { key: 'yes', label: '发动' },
       { key: 'no', label: '不发动' },
-    ]);
+    ], { skill });
     return use === 'yes';
   }
 
