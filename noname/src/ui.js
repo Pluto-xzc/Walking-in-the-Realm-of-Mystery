@@ -7,7 +7,7 @@
  *   - 开屏开源声明与资源加载
  */
 
-import { CARDS, numberLabel, SUITS } from './cards.js';
+import { CARDS, numberLabel, SUITS, EQUIP_SLOTS } from './cards.js';
 import { CHARACTERS, GROUPS } from './characters.js';
 import { SKILLS } from './skills.js';
 import { IDENTITY_LABEL, IDENTITY_COLOR } from './match.js';
@@ -391,6 +391,7 @@ export class UI {
           </div>
         </div>
         <div class="sgs-self-hand" id="sgs-self-hand"></div>
+        <div class="sgs-self-equips" id="sgs-self-equips"></div>
       </div>
       <div class="sgs-actions" id="sgs-actions"></div>
       <div class="sgs-select-hint" id="sgs-select-hint">
@@ -816,7 +817,8 @@ export class UI {
     hpChip.style.borderColor = 'rgba(176,58,58,0.5)';
     sk.appendChild(hpChip);
 
-    // 手牌
+    // ================= 手牌区（只放真正的手牌）=================
+    // 装备区的牌不在这里显示 —— 它们有自己的格子（见 renderEquipSlots）。
     const hand = $('#sgs-self-hand');
     hand.innerHTML = '';
 
@@ -830,27 +832,80 @@ export class UI {
       return;
     }
 
-    // 手牌区：装备牌按「武器→防具→宝物→进攻马→防御马」固定排在右侧
-    const handCards = me.hand.slice();
-    const sorted = this.sortHandCards(handCards, me);
-    sorted.hand.forEach((c) => hand.appendChild(this.buildCardNode(c, me)));
-    sorted.equips.forEach((c) => hand.appendChild(this.buildCardNode(c, me, true)));
+    // 手牌排列：非装备牌按摸牌顺序；手牌里的装备牌排到最右侧，
+    // 并按「武器 → 防具 → 宝物 → 进攻马 → 防御马」排序。
+    const plain = [];
+    const equipInHand = [];
+    for (const c of me.hand) {
+      if (c.type === 'equip') equipInHand.push(c);
+      else plain.push(c);
+    }
+    const slotOrder = Object.fromEntries(EQUIP_SLOTS.map((s) => [s.key, s.order]));
+    equipInHand.sort(
+      (a, b) => (slotOrder[CARDS[a.name].subtype] || 9) - (slotOrder[CARDS[b.name].subtype] || 9),
+    );
 
-    if (!me.hand.length && !sorted.equips.length) {
+    plain.forEach((c) => hand.appendChild(this.buildCardNode(c, me)));
+    equipInHand.forEach((c) => hand.appendChild(this.buildCardNode(c, me)));
+
+    if (!me.hand.length) {
       hand.appendChild(el('div', 'sgs-badge', '（无手牌）'));
+    }
+
+    // 装备区格子（独立区域，与手牌分开）
+    this.renderEquipSlots(me);
+  }
+
+  /**
+   * 装备区格子
+   * ------------------------------------------------------------------
+   * 显示固定数量的槽位，让玩家明确哪些区域是空的、哪些有装备。
+   * 支持「废除装备区」（槽位被废除时显示为禁用样式）。
+   */
+  renderEquipSlots(me) {
+    const wrap = $('#sgs-self-equips');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    for (const slot of EQUIP_SLOTS) {
+      const card = me.equips[slot.key] || null;
+      const disabled = me.isEquipSlotDisabled && me.isEquipSlotDisabled(slot.key);
+
+      const cell = el('div', 'sgs-equip-slot');
+      cell.dataset.slot = slot.key;
+
+      // 槽位标签
+      const label = el('div', 'sgs-equip-label', slot.label);
+      cell.appendChild(label);
+
+      if (disabled) {
+        cell.classList.add('disabled');
+        const ph = el('div', 'sgs-equip-empty', '废除');
+        cell.appendChild(ph);
+        cell.title = `${slot.label}区已被废除`;
+      } else if (card) {
+        cell.classList.add('filled');
+        // 槽位内的牌（缩小版卡片）
+        const node = this.buildCardNode(card, me, true);
+        node.classList.add('slot-card');
+        cell.appendChild(node);
+        cell.title = `${card.fullname}：${CARDS[card.name] ? CARDS[card.name].desc : ''}`;
+      } else {
+        const ph = el('div', 'sgs-equip-empty', '空');
+        cell.appendChild(ph);
+        cell.title = `${slot.label}区（空）`;
+      }
+
+      wrap.appendChild(cell);
     }
   }
 
   /**
-   * 手牌排序
-   * ------------------------------------------------------------------
-   * 规则：
-   *   - 装备牌一律排在**最右侧**
-   *   - 装备之间按槽位固定顺序：武器 → 防具 → 宝物 → 进攻马 → 防御马
-   *   - 非装备牌保持原本顺序（摸到的先后）
+   * 手牌排序（仅用于手牌内部的装备排到右侧）
+   * 已装备的牌不进手牌区，见 renderEquipSlots。
    */
-  sortHandCards(cards, me) {
-    const EQUIP_ORDER = { equip1: 1, equip2: 2, equip5: 3, equip4: 4, equip3: 5 };
+  sortHandCards(cards) {
+    const order = Object.fromEntries(EQUIP_SLOTS.map((s) => [s.key, s.order]));
 
     const hand = [];
     const equipInHand = [];
@@ -858,20 +913,10 @@ export class UI {
       if (c.type === 'equip') equipInHand.push(c);
       else hand.push(c);
     }
-
-    // 已装备的牌（从装备区取出，按槽位排序）
-    const equipped = Object.entries(me.equips)
-      .filter(([, c]) => c)
-      .map(([slot, c]) => ({ slot, card: c }))
-      .sort((a, b) => (EQUIP_ORDER[a.slot] || 9) - (EQUIP_ORDER[b.slot] || 9))
-      .map((x) => x.card);
-
-    // 手牌里的装备也按槽位排
     equipInHand.sort(
-      (a, b) => (EQUIP_ORDER[a.subtype] || 9) - (EQUIP_ORDER[b.subtype] || 9),
+      (a, b) => (order[CARDS[a.name].subtype] || 9) - (order[CARDS[b.name].subtype] || 9),
     );
-
-    return { hand, equips: [...equipInHand, ...equipped] };
+    return [...hand, ...equipInHand];
   }
 
   buildCardNode(card, owner, isEquip) {
@@ -1365,14 +1410,22 @@ export class UI {
         wrap.innerHTML = '';
       };
 
-      // 绑定手牌点击
+      // 绑定手牌点击（只响应手牌区，不响应装备区）
       $('#sgs-self-hand').onclick = async (e) => {
         const cardNode = e.target.closest('.sgs-card');
         if (!cardNode) return;
+        // 装备区在另一个容器里，不会被这里命中；
+        // 此处只从手牌中查找，装备牌无法被"使用"。
         const cid = +cardNode.dataset.cid;
-        const card = hand.find((c) => c.id === cid)
-          || Object.values(player.equips).find((c) => c && c.id === cid);
+        const card = hand.find((c) => c.id === cid);
         if (!card) return;
+
+        // 双重保险：已装备的牌不允许使用
+        if (Object.values(player.equips).some((c) => c === card)) {
+          this.setPrompt('该牌已在装备区，无法再次使用');
+          setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
+          return;
+        }
 
         // 检查是否可用
         const check = this.checkCardUsable(player, card, game);
@@ -1439,6 +1492,17 @@ export class UI {
     const def = CARDS[card.name];
     if (!def) return { ok: false, reason: '此牌无法使用' };
     if (def.respondOnly) return { ok: false, reason: `【${def.fullname}】只能在响应时使用` };
+
+    // 已装备的牌不能被使用（三国杀原版机制）
+    if (Object.values(player.equips).some((c) => c === card)) {
+      return { ok: false, reason: `【${def.fullname}】已在装备区，无法再次使用` };
+    }
+
+    // 装备区被废除时不能装备
+    if (def.type === 'equip' && player.isEquipSlotDisabled
+      && player.isEquipSlotDisabled(def.subtype)) {
+      return { ok: false, reason: '该装备区已被废除，无法装备' };
+    }
 
     const g = game;
     const others = g.players.filter((p) => p.alive && p !== player);

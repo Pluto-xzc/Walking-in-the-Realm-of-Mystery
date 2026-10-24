@@ -163,11 +163,17 @@ html, body {
   position: fixed; inset: 0;
   display: none;
   flex-direction: column;
-  /* 木纹背景图（程序生成），叠加径向渐变保证可读性；图片缺失时自动回退到纯渐变 */
-  background:
-    radial-gradient(ellipse at 50% 42%, rgba(58, 49, 40, 0.55) 0%, rgba(34, 28, 22, 0.75) 55%, rgba(20, 16, 13, 0.9) 100%),
-    url('/noname/assets/background/table.svg') center / cover no-repeat,
+  /* 木纹背景图（程序生成）叠在渐变色之上。
+     注意：这里只作为最底层的桌面底纹，透明度必须足够低，
+     否则会盖住上层的角色/手牌等内容（曾因叠加过暗导致整页看不见）。
+     图片缺失时自动回退到纯渐变。 */
+  background-color: #1a1512;
+  background-image:
+    url('/noname/assets/background/table.svg'),
     radial-gradient(ellipse at 50% 42%, #3a3128 0%, #221c16 55%, #14100d 100%);
+  background-size: cover, cover;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
 }
 
 #sgs-table.active { display: flex; }
@@ -274,6 +280,92 @@ html, body {
 /* 中央区里的牌（在弃牌堆面板中高亮） */
 .sgs-pile-grid .sgs-card.in-center {
   box-shadow: 0 0 0 2px var(--gold-light), 0 0 10px rgba(212, 160, 23, 0.45);
+}
+
+/* ==========================================================================
+   装备区格子
+   ========================================================================== */
+.sgs-self-equips {
+  display: flex;
+  gap: 6px;
+  padding: 6px 14px 10px;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(212, 160, 23, 0.18);
+  background: rgba(20, 16, 13, 0.45);
+}
+
+.sgs-equip-slot {
+  position: relative;
+  width: 74px;
+  min-height: 96px;
+  border-radius: 6px;
+  border: 1px dashed rgba(138, 125, 107, 0.55);
+  background: rgba(245, 239, 228, 0.04);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+/* 有装备的槽位：实线高亮 */
+.sgs-equip-slot.filled {
+  border-style: solid;
+  border-color: rgba(212, 160, 23, 0.6);
+  background: rgba(212, 160, 23, 0.08);
+}
+
+/* 被废除的槽位 */
+.sgs-equip-slot.disabled {
+  border-color: rgba(176, 58, 58, 0.6);
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(176, 58, 58, 0.1),
+    rgba(176, 58, 58, 0.1) 5px,
+    transparent 5px,
+    transparent 10px
+  );
+}
+.sgs-equip-slot.disabled .sgs-equip-label { color: #c07070; }
+.sgs-equip-slot.disabled .sgs-equip-empty { color: #c07070; }
+
+.sgs-equip-label {
+  font-size: 10px;
+  color: #8a7d6b;
+  letter-spacing: 1px;
+  margin-bottom: 3px;
+  user-select: none;
+}
+.sgs-equip-slot.filled .sgs-equip-label { color: var(--gold-light); }
+
+.sgs-equip-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: rgba(138, 125, 107, 0.5);
+  user-select: none;
+}
+
+/* 槽位里的牌：缩小并去掉交互 */
+.sgs-equip-slot .sgs-card.slot-card {
+  width: 100%;
+  height: auto;
+  flex: 1;
+  cursor: default;
+  box-shadow: none;
+  border-color: rgba(212, 160, 23, 0.4);
+}
+.sgs-equip-slot .sgs-card.slot-card:hover { transform: none; }
+.sgs-equip-slot .sgs-card.slot-card .card-name { font-size: 19px; }
+.sgs-equip-slot .sgs-card.slot-card .card-corner { font-size: 10px; padding: 0 3px 1px; }
+.sgs-equip-slot .sgs-card.slot-card .card-corner .num { font-size: 11px; }
+
+/* 装备区在窄屏下允许横向滚动 */
+@media (max-width: 620px) {
+  .sgs-self-equips { overflow-x: auto; }
+  .sgs-equip-slot { width: 62px; min-height: 84px; flex-shrink: 0; }
 }
 
 /* 牌池选择提示（五谷丰登等） */

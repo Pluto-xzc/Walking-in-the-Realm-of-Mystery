@@ -28,6 +28,43 @@ export function numberLabel(n) {
  * type: basic 基本牌 / trick 锦囊牌 / equip 装备牌
  * subtype(装备): equip1 武器 / equip2 防具 / equip3 防御马 / equip4 进攻马
  */
+/* ==========================================================================
+ * 装备槽位定义
+ * --------------------------------------------------------------------------
+ * 这是装备区的唯一权威定义，引擎与界面都从这里取。
+ *
+ * key     : equips 对象里的键名
+ * label   : 显示名
+ * short   : 界面格子里的短标签
+ * order   : 界面排列顺序（武器 → 防具 → 宝物 → 进攻马 → 防御马）
+ *
+ * 说明：标准包只有 武器/防具/进攻马/防御马 四类，
+ * 宝物槽位（equip5）为后续扩展预留，标准包内不会有牌使用它。
+ * 未来做「废除装备区」时，只需给对应槽位打标记即可。
+ * ========================================================================== */
+export const EQUIP_SLOTS = [
+  { key: 'equip1', label: '武器', short: '武', order: 1, range: true },
+  { key: 'equip2', label: '防具', short: '防', order: 2, range: false },
+  { key: 'equip5', label: '宝物', short: '宝', order: 3, range: false },
+  { key: 'equip4', label: '进攻马', short: '进', order: 4, range: false },
+  { key: 'equip3', label: '防御马', short: '防', order: 5, range: false },
+];
+
+/** 槽位 key → 定义 */
+export const EQUIP_SLOT_MAP = Object.fromEntries(
+  EQUIP_SLOTS.map((s) => [s.key, s]),
+);
+
+/** 新建一个空的装备区对象 */
+export function makeEmptyEquips() {
+  const e = {};
+  for (const s of EQUIP_SLOTS) e[s.key] = null;
+  return e;
+}
+
+/* ==========================================================================
+ * 卡牌定义
+ * ========================================================================== */
 export const CARDS = {
   /* ============================ 基本牌 ============================ */
   sha: {
@@ -411,7 +448,7 @@ export const CARDS = {
   hanbing: {
     name: 'hanbing',
     type: 'equip',
-    subtype: 'equip2',
+    subtype: 'equip1',          // 武器（原误标为 equip2 防具）
     label: '寒冰',
     fullname: '寒冰剑',
     attackRange: 2,

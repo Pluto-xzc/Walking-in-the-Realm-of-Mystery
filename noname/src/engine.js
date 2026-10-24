@@ -12,7 +12,12 @@
  *   - 状态显式建模，便于调试与重放
  */
 
-import { CARDS, DECK_LIST, SUITS, numberLabel } from './cards.js';
+import { CARDS, DECK_LIST, SUITS, numberLabel, makeEmptyEquips, EQUIP_SLOTS } from './cards.js';
+
+/** 槽位 short 名，用于日志（避免循环依赖，这里内联一份） */
+const EQUIP_SLOT_MAP_SHORT = {
+  equip1: '武器', equip2: '防具', equip5: '宝物', equip4: '进攻马', equip3: '防御马',
+};
 import { CHARACTERS } from './characters.js';
 import { SKILLS } from './skills.js';
 
@@ -71,7 +76,15 @@ export class Player {
 
     this.skills = [...ch.skills];
     this.hand = [];
-    this.equips = { equip1: null, equip2: null, equip3: null, equip4: null };
+    this.equips = makeEmptyEquips();
+    /**
+     * 被废除的装备区（预留，参考无名杀）
+     * ------------------------------------------------------------------
+     * 存放被废除的槽位 key 数组，例如 ['equip1'] 表示武器区被废除。
+     * 被废除的槽位：不能装备新牌，原有牌失效但不弃置。
+     * 标准包内不会用到，此处只把结构留好，供后续武将技能调用。
+     */
+    this.disabledEquips = [];
     this.judges = [];
 
     this.flags = {};          // 回合内标记
@@ -80,6 +93,19 @@ export class Player {
     this.identityShown = false;
     this.isZhu = false;
     this.extraTurn = false;
+  }
+
+  /** 判断某个装备槽位是否已被废除 */
+  isEquipSlotDisabled(slot) {
+    return this.disabledEquips.includes(slot);
+  }
+
+  /** 废除/恢复装备区（供后续技能使用） */
+  setEquipSlotDisabled(slot, disabled = true) {
+    const has = this.disabledEquips.includes(slot);
+    if (disabled && !has) this.disabledEquips.push(slot);
+    if (!disabled && has) this.disabledEquips = this.disabledEquips.filter((s) => s !== slot);
+    if (this.game) this.game.emit();
   }
 
   /* ------------ 查询 ------------ */
@@ -843,7 +869,7 @@ export class Game {
     for (const c of all) c.zone = 'discard';
     this.toDiscard(...all);
     player.hand = [];
-    player.equips = { equip1: null, equip2: null, equip3: null, equip4: null };
+    player.equips = makeEmptyEquips();
     player.judges = [];
     this.emit();
 
@@ -858,7 +884,7 @@ export class Game {
           for (const c of others) c.zone = 'discard';
           this.toDiscard(...others);
           source.hand = [];
-          source.equips = { equip1: null, equip2: null, equip3: null, equip4: null };
+          source.equips = makeEmptyEquips();
           source.judges = [];
           this.log(`${source.name} 误杀忠臣，弃置所有牌`);
         }
@@ -1117,6 +1143,23 @@ export class Game {
     if (!def) return;
 
     // ---- 引擎层合法性校验（防止 UI/AI 绕过规则）----
+
+    // ① 已装备的牌不能被再次使用（三国杀原版机制）
+    //    装备区的牌只能被弃置/获得，不能作为手牌打出。
+    const isEquipped = Object.values(player.equips).some((c) => c === card)
+      || (card.sourceCards || []).some((c) => Object.values(player.equips).some((e) => e === c));
+    if (isEquipped) {
+      this.log(`【${card.fullname}】已在装备区，无法再次使用`);
+      return;
+    }
+
+    // ② 装备区被废除时不能装备
+    if (def.type === 'equip' && player.isEquipSlotDisabled(def.subtype)) {
+      this.log(`装备区已被废除，无法装备【${card.fullname}】`);
+      return;
+    }
+
+    // ③ 【杀】次数限制
     if (card.name === 'sha') {
       const used = player.flags.usedShaThisTurn || 0;
       if (!this.shaUnlimited(player) && used >= 1) {
@@ -1124,7 +1167,7 @@ export class Game {
         return;
       }
     }
-    // 目标合法性
+    // ④ 目标合法性
     if (targets && targets.length) {
       for (const t of targets) {
         if (t !== player && !this.canBeTargeted(t, card)) {
@@ -1190,6 +1233,21 @@ export class Game {
 
   async equipCard(player, card) {
     const sub = CARDS[card.name].subtype;
+
+    // 装备区被废除时无法装备（预留机制）
+    if (player.isEquipSlotDisabled(sub)) {
+      const slotName = (EQUIP_SLOT_MAP_SHORT[sub] || sub);
+      this.log(`${player.name} 的${slotName}区已被废除，无法装备【${card.fullname}】`);
+      // 牌退回手牌，不弃置
+      if (!player.hand.includes(card)) {
+        card.zone = 'hand';
+        card.owner = player;
+        player.hand.push(card);
+      }
+      this.emit();
+      return false;
+    }
+
     const old = player.equips[sub];
     if (old) {
       await player.loseCards([old]);
@@ -1197,11 +1255,26 @@ export class Game {
       this.toDiscard(old);
       old.zone = 'discard';
     }
+
+    // 从原本所在的区域移除（手牌 / 其他角色处等）
+    // 这一步很重要：否则牌会同时存在于手牌和装备区。
+    const hi = player.hand.indexOf(card);
+    if (hi >= 0) player.hand.splice(hi, 1);
+    for (const p of this.players) {
+      const j = p.judges.indexOf(card);
+      if (j >= 0) p.judges.splice(j, 1);
+      // 从他人的装备区移除（顺手牵羊等来源）
+      for (const k of Object.keys(p.equips)) {
+        if (p.equips[k] === card) p.equips[k] = null;
+      }
+    }
+
     player.equips[sub] = card;
     card.zone = 'equip';
     card.owner = player;
     this.log(`${player.name} 装备了【${card.fullname}】`);
     this.emit();
+    return true;
   }
 
   /* ---------------- 无懈可击 ---------------- */
@@ -1575,21 +1648,35 @@ export class Game {
 
   async equipCard2(player, card) {
     const sub = CARDS[card.name].subtype;
+
+    // 装备区被废除时无法装备
+    if (player.isEquipSlotDisabled(sub)) {
+      this.log(`${player.name} 的${EQUIP_SLOT_MAP_SHORT[sub] || sub}区已被废除，无法装备【${card.fullname}】`);
+      await player.gain([card], 'gain2');
+      return false;
+    }
+
     const old = player.equips[sub];
     if (old && old !== card) {
       player.equips[sub] = null;
       this.toDiscard(old); old.zone = 'discard';
     }
-    // 从原持有者装备区移除
+    // 从原持有者的各区域移除（装备区 / 手牌 / 判定区）
+    const SLOT_KEYS = EQUIP_SLOTS.map((s) => s.key);
     for (const p of this.players) {
-      for (const k of ['equip1', 'equip2', 'equip3', 'equip4']) {
+      for (const k of SLOT_KEYS) {
         if (p.equips[k] === card) p.equips[k] = null;
       }
+      const hi = p.hand.indexOf(card);
+      if (hi >= 0) p.hand.splice(hi, 1);
+      const ji = p.judges.indexOf(card);
+      if (ji >= 0) p.judges.splice(ji, 1);
     }
     player.equips[sub] = card;
     card.zone = 'equip';
     card.owner = player;
     this.emit();
+    return true;
   }
 
   /** 主动技 */
