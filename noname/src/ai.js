@@ -384,6 +384,104 @@ export class AI {
       case 'bagua_skill': return true;
       case 'hanbing_skill': return ctx.event.target && ctx.event.target.countCards('he') >= 2
         && ctx.event.target.hp > 1;
+
+      /* ---------------- 折桠 ---------------- */
+
+      /**
+       * 无我入春时
+       * ----------------------------------------------------------------
+       * 按需求方的判断标准，满足**任一**即为赚，就发动：
+       *   ① 这次伤害能打死友方（救得下来）
+       *   ② 我方因本技能获得的护甲总值 > 敌方获得的护甲总值
+       *
+       * 给护甲的名单规则（与技能一致）：
+       *   其他角色「本回合未使用过牌、但成为过牌目标」；自己一定在名单里。
+       */
+      case 'wuworuchunshi': {
+        const ev = ctx.event;
+        if (!ev || !ev.player) return false;
+        const victim = ev.player;
+
+        // ① 这一下会不会打死人 → 一定要救
+        const armor = victim.hujia || 0;
+        const dmg = Math.max(0, (ev.num || 0) - armor);
+        if (victim.hp - dmg <= 0) return true;
+
+        // ② 比较双方获得的护甲总值
+        const gainsOf = (side) => {
+          let n = 0;
+          for (const p of this.game.players) {
+            if (!p.alive) continue;
+            const mine = (p === player);
+            if (!mine) {
+              const used = this.game.hasUsedCardThisTurn(p);
+              const targeted = this.game.hasBeenTargetedThisTurn(p);
+              if (used || !targeted) continue;
+            }
+            if (side(p)) n += 1;
+          }
+          return n;
+        };
+        const friendGain = gainsOf((p) => !this.isEnemy(player, p));
+        const foeGain = gainsOf((p) => this.isEnemy(player, p));
+        return friendGain > foeGain;
+      }
+
+      /**
+       * 星火尽染寒
+       * ----------------------------------------------------------------
+       * 需求方标准：只要发动后**不会导致自己完全无法对敌方使用
+       * 【杀】这类伤害牌**，就发动（即整体不亏，可以白摸牌）。
+       */
+      case 'xinghuojinranhan': {
+        const lost = Math.max(0, (player.maxHp || 0) - (player.hp || 0));
+        const x = lost + 2;
+        // 发动后手牌数（用作限制阈值：只有手牌数或体力 >= 自己的角色可被打）
+        const handAfter = player.countCards('h') + x;
+        const myHp = player.hp || 0;
+
+        const enemies = this.game.players.filter(
+          (p) => p.alive && p !== player && this.isEnemy(player, p),
+        );
+        if (!enemies.length) return true;      // 没有敌人，摸了也不亏
+
+        // 是否还有敌人「可被打」：手牌数 >= 自己 或 体力 >= 自己
+        const reachable = enemies.filter(
+          (p) => p.countCards('h') >= handAfter || (p.hp || 0) >= myHp,
+        );
+        return reachable.length > 0;
+      }
+
+      /**
+       * 剪辑高手
+       * ----------------------------------------------------------------
+       * 需求方标准：**只要弃掉的手牌价值 <= 中央区那张牌的价值就发动**，
+       * 实际上基本等于默认发动（因为「视为使用一张牌」本身就很赚）。
+       *
+       * 这里逐张比对：若存在某张可弃的手牌 A 与某张可用的中央区牌 B，
+       * 使得 value(A) <= value(B)，就发动。
+       * 若中央区完全没牌可用，则返回 false（filter 其实已经挡掉了）。
+       */
+      case 'jianjigaoshou': {
+        const usable = (this.game.centerZone || [])
+          .filter((c) => this.game.cardUsableNow(player, c));
+        if (!usable.length) return false;
+        const used = player.flags.jianjiUsed || {};
+        const hand = player.getCards('h').filter((c) => !used[c.color]);
+        if (!hand.length) return false;
+
+        // 只要存在「手牌价值 <= 中央区牌价值」的组合就发动
+        for (const a of hand) {
+          const va = this.cardValue(a);
+          for (const b of usable) {
+            const vb = this.cardValue(b);
+            if (va <= vb) return true;
+          }
+        }
+        // 兜底：能白摸牌（花色相同）或能造成伤害时也发动
+        return usable.length > 0;
+      }
+
       default: return true;
     }
   }
@@ -539,8 +637,8 @@ export class AI {
             let v = marginal([5, 3, 1], usedSha);
             // 目标低血时更值（有机会击杀）
             if (t.hp <= 1) v += 3;
-            // 【酒】加成下这一刀更值
-            if ((player.storage.jiu || 0) > 0) v += 2;
+            // 【酒】加成下这一刀更值（同样只认本回合有效的酒意）
+            if (this.game.jiuActive(player)) v += 2;
             push(v, { type: 'use', card, targets: [t] });
           }
           break;
@@ -548,11 +646,15 @@ export class AI {
 
         /* ---------- 风林火山 ---------- */
 
-        /* 【酒】：残血时当【桃】用；否则留着配合【杀】 */
+        /* 【酒】：残血时当【桃】用；否则留着配合【杀】
+         * 注意：酒意只在使用的当回合有效（见 engine.jiuActive），
+         * 所以判断「是否已有酒意」也必须用 jiuActive，不能用 storage.jiu，
+         * 否则会把上回合的残留当成已有加成。
+         */
         case 'jiu': {
           if (player.hp <= 1 && player.isDamaged()) {
             push(7.3, { type: 'use', card, targets: [player] });
-          } else if ((player.flags.jiuUsed || 0) === 0) {
+          } else if ((player.flags.jiuUsed || 0) === 0 && !this.game.jiuActive(player)) {
             // 手里有杀且能打到人时才值得
             const hasSha = hand.some((c) => c.name === 'sha');
             const canHit = enemies.some((p) => player.inAttackRange(p));

@@ -15,6 +15,7 @@
 import { CARDS, DECK_LIST, SUITS, numberLabel, makeEmptyEquips, EQUIP_SLOTS } from './cards.js';
 import { CHARACTERS } from './characters.js';
 import { SKILLS } from './skills.js';
+import { flushExcludedOnDeath, tryResetAngyang, markAngyangUsed, isAngyangUsed } from './mechanics.js';
 
 /**
  * 牌所在区域（zone）的权威定义
@@ -206,6 +207,19 @@ export class Player {
      */
     this.disabledEquips = [];
     this.judges = [];
+
+    /**
+     * 除外区（本扩新增机制）
+     * ------------------------------------------------------------------
+     * 被「除外」的牌移出游戏，存放于此。
+     * 规则（按需求方给定）：
+     *   · 仅**主人自己可见**具体内容，其他人只了解数量
+     *   · 无数量限制
+     *   · 主人死亡时全部进入弃牌堆
+     *   · 每名角色的除外区**相互独立**
+     * 具体操作见 mechanics.js 的 excludeCards / retrieveExcluded 等。
+     */
+    this.excluded = [];
 
     /**
      * 护甲值（参考无名杀 hujia）
@@ -552,20 +566,73 @@ export class Player {
     if (!list.length) return;
     this.game.log(`${this.name} 重铸了 ${list.map((c) => c.text).join('、')}`);
     await this.loseCards(list);
-    this.game.toDiscard(...list);
+    // 传数组：toDiscard(cards) 只收一个参数，展开会丢掉多余的牌
+    this.game.toDiscard(list);
     this.game.emit();
     await this.draw(list.length);
   }
 
+  /**
+   * 流失体力
+   * @returns {Promise<boolean>} 是否因此进入了濒死状态
+   */
   async loseHp(num) {
-    if (!this.alive) return;
+    if (!this.alive) return false;
     this.hp -= num;
     this.game.log(`${this.name} 失去了 ${num} 点体力（${this.hp}/${this.maxHp}）`);
     this.game.emit();
-    if (this.hp <= 0) await this.game.enterDying(this);
+    if (this.hp <= 0) {
+      await this.game.enterDying(this);
+      return true;        // 因本次流失体力而濒死
+    }
+    return false;
+  }
+
+  /**
+   * 流失体力，但**不触发因本次流失而产生的濒死结算**
+   * ------------------------------------------------------------------
+   * 用于「流失体力后自行处理濒死」的技能，例如折桠【无我入春时】：
+   *   「若发动此技能的『让你流失 1 点体力』导致你濒死，
+   *     则你直接恢复体力值直到 1」
+   * 这里的裁定是：**流失照样发生**，但那次流失所引发的
+   * **濒死结算不执行**（不求桃、不阵亡），由调用方自行把体力补回。
+   *
+   * 同时挂在 Player 上（player.loseHpWithoutDying）与
+   * Game 上（game.loseHpWithoutDying(player, n)），方便两种写法。
+   *
+   * @param {Player} player
+   * @param {number} num
+   * @returns {Promise<boolean>} 是否「本应进入濒死」（供调用方判断）
+   */
+  async loseHpWithoutDying(player, num = 1) {
+    if (!player || !player.alive) return false;
+    player.hp -= num;
+    this.log(`${player.name} 失去了 ${num} 点体力（${player.hp}/${player.maxHp}）`);
+    this.emit();
+    return player.hp <= 0;   // 告知调用方「本应濒死」，但已跳过濒死结算
+  }
+
+  /** 便捷写法：game.loseHpWithoutDying(player, n) 等价于 player.loseHpWithoutDying(n) */
+  loseHpNoDying(player, num = 1) {
+    return player.loseHpWithoutDying(num);
   }
 
   isDamaged() { return this.hp < this.maxHp; }
+
+  /**
+   * 手牌中「不计入手牌上限」的张数
+   * ------------------------------------------------------------------
+   * 目前来源：【同步索敌攻击】摸到的牌（gaintag 含 'suodi'）。
+   * 弃牌阶段计算超出量时会先把这些牌排除。
+   */
+  countNoLimitCards() {
+    return this.countCards('h', (c) => (c.gaintag || []).includes('suodi'));
+  }
+
+  /** 该手牌是否不计入手牌上限 */
+  isNoLimitCard(card) {
+    return !!card && (card.gaintag || []).includes('suodi');
+  }
 
   /* ------------ 玩家交互（异步） ------------ */
   async chooseOption({ prompt, options }) {
@@ -695,6 +762,14 @@ export class Game {
     this.onUpdate = () => {};
     this.pendingChoice = null;
 
+    /**
+     * 技能表引用
+     * ------------------------------------------------------------------
+     * 供 mechanics.js 等外部模块按 id 查技能定义
+     *（昂扬技的重置需要读 skill.angyang）。
+     */
+    this.skillsRef = SKILLS;
+
     /* 展示中（瞬时公开，区别于明置） */
     this.showingCards = [];
     this.showingBy = null;
@@ -724,8 +799,19 @@ export class Game {
   }
 
   /** 兼容旧名：把牌置入弃牌堆（回合内会同时保留在中央区） */
-  toDiscard(cards) {
-    for (const c of this._asCardList(cards)) {
+  /**
+   * 归入弃牌堆
+   * ------------------------------------------------------------------
+   * ⚠️ 参数接受「数组」或「单张牌」，**也兼容可变参数**：
+   *   历史坑：调用方写成 toDiscard(...cards) 时，若只处理第一个参数，
+   *   其余牌会凭空消失（曾导致阵亡/误杀忠臣/重铸时牌数不对）。
+   *   这里统一吸收所有参数形式，从根上避免该类 bug。
+   */
+  toDiscard(cards, ...rest) {
+    const input = rest.length
+      ? [].concat(cards || [], rest)
+      : cards;
+    for (const c of this._asCardList(input)) {
       if (!c) continue;
       c.zone = 'discard';
       if (!this.discardPile.includes(c)) this.discardPile.push(c);
@@ -975,6 +1061,12 @@ export class Game {
       player, card, targets: targets || [], kind: 'use',
     };
     this.useEvents.push({ ...ev, turn: this.turnCount });
+    // 本回合「使用过牌」标记（【无我入春时】给护甲时要用）
+    if (player.addFlag) player.addFlag('usedCardThisTurn', 1);
+    // 本回合「成为过牌的目标」标记（按每个目标分别记录）
+    for (const t of (targets || [])) {
+      if (t && t !== player && t.addFlag) t.addFlag('beenTargetedThisTurn', 1);
+    }
     await this.checkSkills('cardUsed', ev);
     await this.checkSkills('cardUsedOrResponded', ev);
     // 「成为牌的目标」按每个目标分别触发
@@ -1026,8 +1118,10 @@ export class Game {
   /* ---------------- 摸牌 / 获得 ---------------- */
   async playerGain(player, cards, from) {
     for (const c of cards) {
+      if (!c) continue;
       // 被原持有者以外的角色获得 → 失去明置状态
-      c.checkRevealLost(player);
+      // （虚拟牌没有该方法，需判空）
+      if (typeof c.checkRevealLost === 'function') c.checkRevealLost(player);
       // 从原区域移除（避免同一张牌同时存在于多处）
       for (const p of this.players) {
         const hi = p.hand.indexOf(c);
@@ -1173,8 +1267,17 @@ export class Game {
         if (willUse) {
           this.log(`${p.name} 发动【${sk.name}】`);
           await sk.content(ctx);
+          // 昂扬技：发动后进入「已用」状态
+          if (sk.angyang) markAngyangUsed(p, sid);
         }
       }
+    }
+    // ⑥ 昂扬技重置检查
+    //    每个技能时机结算完后，逐角色检查其昂扬技的「激昂」条件；
+    //    条件成立且处于已用状态 → 重置（可反复重置多次）。
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      tryResetAngyang(this, p, event);
     }
     this.emit();
   }
@@ -1353,9 +1456,33 @@ export class Game {
     return false;
   }
 
-  /** 使用锦囊是否无视距离限制（奇才） */
+  /**
+   * 使用锦囊是否无视距离限制
+   * ------------------------------------------------------------------
+   * ① 武将技/装备技的 mod.trickNoDistance 声明（如奇才）
+   * ② 【星火尽染寒】这类「本回合使用牌无距离限制」的回合标记
+   */
   trickNoDistance(player) {
-    return player.hasSkill('qicai');
+    if (player.hasSkill('qicai')) return true;
+    if (player.flags && player.flags.xinghuoActive === this.turnCount) return true;
+    // 通用：任意 mod 声明的 trickNoDistance
+    for (const { skill } of this.collectTargetLimitSkills(player)) {
+      const fn = skill.mod && skill.mod.trickNoDistance;
+      if (typeof fn !== 'function') continue;
+      let ok = false;
+      try { ok = !!fn(player, this); } catch { ok = false; }
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  /** 使用牌（含【杀】）是否无视距离限制 */
+  cardNoDistance(player, card) {
+    if (!card) return false;
+    if (card.type === 'trick') return this.trickNoDistance(player);
+    // 【杀】：发动【星火尽染寒】的本回合无距离限制
+    if (player.flags && player.flags.xinghuoActive === this.turnCount) return true;
+    return false;
   }
 
   /**
@@ -1720,11 +1847,13 @@ export class Game {
       this.log(`${source.name} 的【裸衣】使伤害 +1`);
     }
 
-    // 【酒】：本回合下一张【杀】伤害 +1（用掉即清除）
-    if (source && ev.card && ev.card.name === 'sha' && (source.storage.jiu || 0) > 0) {
+    // 【酒】：本回合下一张【杀】伤害 +1
+    // 只认「本回合产生的、且尚未用掉」的酒意（jiuActive 会校验回合）
+    if (source && ev.card && ev.card.name === 'sha' && this.jiuActive(source)) {
       ev.num += source.storage.jiu;
       this.log(`${source.name} 的【酒】生效，伤害 +${source.storage.jiu}`);
-      source.storage.jiu = 0;
+      // 用掉即清除（带 jiuSustain 的角色会保留，交由扩展武将决定）
+      this.clearJiu(source);
     }
   }
 
@@ -1823,6 +1952,22 @@ export class Game {
   }
 
   /* ---------------- 濒死 ---------------- */
+  /**
+   * 流失体力，但**不触发因本次流失而产生的濒死结算**（Game 层入口）
+   * ------------------------------------------------------------------
+   * 与 Player.loseHpWithoutDying 等价，供技能以 game.xxx 形式调用。
+   * 裁定见 Player 上的同名方法注释。
+   *
+   * @returns {Promise<boolean>} 是否「本应进入濒死」
+   */
+  async loseHpWithoutDying(player, num = 1) {
+    if (!player || !player.alive) return false;
+    player.hp -= num;
+    this.log(`${player.name} 失去了 ${num} 点体力（${player.hp}/${player.maxHp}）`);
+    this.emit();
+    return player.hp <= 0;
+  }
+
   async enterDying(player, source) {
     if (this.over) return;
     this.log(`${player.name} 濒死！`);
@@ -1887,12 +2032,19 @@ export class Game {
     player.identityShown = true;
     this.log(`${player.name} 阵亡${wasHidden ? `，身份为【${IDENTITY_NAME[player.identity] || player.identity}】` : ''}`);
     // 弃置所有牌
+    // ⚠️ 必须传数组：toDiscard(cards) 只收一个参数，
+    //    写成 toDiscard(...all) 只会处理第一张，其余牌会凭空消失。
     const all = player.getCards('hej');
     for (const c of all) c.zone = 'discard';
-    this.toDiscard(...all);
+    this.toDiscard(all);
     player.hand = [];
     player.equips = makeEmptyEquips();
     player.judges = [];
+
+    // 除外区：主人阵亡时，里面的牌全部进入弃牌堆
+    // （本扩「除外」机制规则之一：牌只在主人存活期间被移出游戏）
+    flushExcludedOnDeath(player);
+
     this.emit();
 
     // 奖惩
@@ -1904,7 +2056,8 @@ export class Game {
         const others = source.getCards('hej');
         if (others.length) {
           for (const c of others) c.zone = 'discard';
-          this.toDiscard(...others);
+          // 传数组（同上：展开只会处理第一张）
+          this.toDiscard(others);
           source.hand = [];
           source.equips = makeEmptyEquips();
           source.judges = [];
@@ -2068,6 +2221,17 @@ export class Game {
 
     await this.checkSkills('turnEnd', { player });
 
+    /* ------------------------------------------------------------
+     * 回合结束：清理本回合的临时状态
+     * ------------------------------------------------------------
+     * 【酒意】必须在这里清掉（force=true）。
+     * 无名杀把酒意挂在临时技能上，`phaseAfter` 移除技能时
+     * `onremove` 会 `delete storage.jiu`，所以酒意**绝不可能跨回合**。
+     * 若不清理，就会变成「上回合喝的酒，下回合的杀还在加伤」——
+     * 这不符合原版规则。
+     * ------------------------------------------------------------ */
+    this.clearJiu(player, true);
+
     // ---- 回合彻底结束：中央区归档进弃牌堆 ----
     // 此后这些牌只能从弃牌堆检索到，中央区不再包含它们。
     this._inCurrentTurn = false;
@@ -2202,6 +2366,11 @@ export class Game {
   async phaseUse(player) {
     if (player.hasFlag('skipUse')) { this.log(`${player.name} 跳过出牌阶段`); return; }
     this.log(`${player.name} 进入出牌阶段`);
+
+    // 出牌阶段开始时（如【星火尽染寒】在此发动）
+    await this.checkSkills('phaseUseBegin', { player });
+    if (!player.alive || this.over) return;
+
     this.emit();
 
     let guard = 0;
@@ -2217,16 +2386,74 @@ export class Game {
     }
   }
 
+  /* ============================================================
+   * 使用牌的目标合法性
+   * ============================================================
+   * 统一入口：技能可通过 mod.targetLimit 收窄「谁能成为目标」。
+   *
+   * 例：【星火尽染寒】发动后，本回合你使用的所有牌只能指定
+   *      「手牌数不小于你」或「体力值不小于你」的角色。
+   *
+   * 之所以做成统一入口：群体锦囊（南蛮/万箭）在选择目标时
+   * 也走这里，从而保证「不再是全部其他角色，而是符合条件的
+   * 全部其他角色」。
+   */
+  canTargetByLimits(source, target, card) {
+    if (!source || !target) return true;
+    for (const { skill, role } of this.collectTargetLimitSkills(source)) {
+      const fn = skill.mod && skill.mod.targetLimit;
+      if (typeof fn !== 'function') continue;
+      let ok = true;
+      try { ok = fn(card, source, target, { skill, role, game: this }); } catch { ok = true; }
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  /** 收集影响目标合法性的 mod 技能（武将技 + 装备技） */
+  collectTargetLimitSkills(player) {
+    const out = [];
+    for (const sid of player.skills || []) {
+      const sk = SKILLS[sid];
+      if (sk && sk.mod && sk.mod.targetLimit) out.push({ skill: sk, role: 'self' });
+    }
+    for (const c of Object.values(player.equips || {}).filter(Boolean)) {
+      const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
+      const sk = esid && SKILLS[esid];
+      if (sk && sk.mod && sk.mod.targetLimit) out.push({ skill: sk, role: 'equip' });
+    }
+    return out;
+  }
+
+  /** 该角色本回合是否使用过牌 */
+  hasUsedCardThisTurn(player) {
+    return !!(player.flags && player.flags.usedCardThisTurn);
+  }
+
+  /** 该角色本回合是否成为过牌的目标 */
+  hasBeenTargetedThisTurn(player) {
+    return !!(player.flags && player.flags.beenTargetedThisTurn);
+  }
+
   async phaseDiscard(player) {
     const ev = { player, skipDiscard: false };
     await this.checkSkills('discardPhaseBefore', ev);
     if (ev.skipDiscard) { this.log(`${player.name} 跳过弃牌阶段`); return; }
 
     const limit = Math.max(0, player.hp);
-    const excess = player.hand.length - limit;
+    /*
+     * 「不计入手牌上限」的牌
+     * ----------------------------------------------------------------
+     * 带 gaintag 'suodi' 的牌（【同步索敌攻击】摸到的）不占手牌上限，
+     * 因此计算超出量时要先把它们排除掉。
+     */
+    const noLimitCount = player.countNoLimitCards
+      ? player.countNoLimitCards() : 0;
+    const excess = Math.max(0, player.hand.length - noLimitCount - limit);
     if (excess <= 0) return;
 
-    this.log(`${player.name} 需弃置 ${excess} 张牌（手牌上限 ${limit}）`);
+    this.log(`${player.name} 需弃置 ${excess} 张牌（手牌上限 ${limit}`
+      + `${noLimitCount ? `，另有 ${noLimitCount} 张不计入手牌上限` : ''}）`);
 
     // 「手牌与体力等价」：可用体力代替部分/全部弃牌
     const split = await player.chooseDiscardSplit(excess);
@@ -2253,6 +2480,16 @@ export class Game {
     const def = CARDS[card.name];
     if (!def) return;
 
+    /*
+     * 结算前快照
+     * ----------------------------------------------------------------
+     * 【同步索敌攻击】需要「这张牌结算后，有没有其他角色的体力或
+     * 手牌数减少」。因此在**任何结算发生之前**记录全场的
+     * （体力, 手牌数），结算完再比对。
+     * 快照挂在 card 上，由 cardUsedAfter 时机读取。
+     */
+    card._snapBefore = this.snapshotVitals();
+
     // ---- 引擎层合法性校验（防止 UI/AI 绕过规则）----
 
     // ① 已装备的牌不能被再次使用（三国杀原版机制）
@@ -2273,7 +2510,11 @@ export class Game {
     // ③ 【杀】次数限制
     if (card.name === 'sha') {
       const used = player.flags.usedShaThisTurn || 0;
-      if (!this.shaUnlimited(player) && used >= 1) {
+      // 「本回合使用【杀】无次数限制」可由技能临时赋予
+      //（如【星火尽染寒】摸到的牌本回合不限次数）
+      const noLimit = this.shaUnlimited(player)
+        || (player.flags && player.flags.shaNoLimitThisTurn);
+      if (!noLimit && used >= 1) {
         this.log(`${player.name} 本回合已使用过【杀】，无法再次使用`);
         return;
       }
@@ -2283,6 +2524,12 @@ export class Game {
       for (const t of targets) {
         if (t !== player && !this.canBeTargeted(t, card)) {
           this.log(`【${card.fullname}】无法指定 ${t.name} 为目标`);
+          return;
+        }
+        // 技能施加的目标限制（如【星火尽染寒】只允许手牌/体力不小于自己的角色）
+        if (t !== player && !this.canTargetByLimits(player, t, card)) {
+          this.log(`【${card.fullname}】无法指定 ${t.name} 为目标`
+            + `（不满足本回合的目标限制）`);
           return;
         }
       }
@@ -2406,6 +2653,221 @@ export class Game {
 
     this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
     this.emit();
+
+    // ⑩ 使用牌后（结算完毕）——【同步索敌攻击】在此检查全场变化
+    await this.emitCardUsedAfter(player, card, targets);
+  }
+
+  /**
+   * 「使用牌后」时机（牌已结算完毕）
+   * ------------------------------------------------------------------
+   * 对应阶段表里的 cardUsedAfter。
+   * 传入结算前的快照，供技能判断「有没有其他角色的体力/手牌数减少」。
+   */
+  async emitCardUsedAfter(player, card, targets = []) {
+    await this.checkSkills('cardUsedAfter', {
+      player,
+      card,
+      targets: targets || [],
+      _snapBefore: card && card._snapBefore,
+    });
+  }
+
+  /* ============================================================
+   * 全场状态快照 / 差异比对
+   * ============================================================
+   * 供【同步索敌攻击】这类「结算后看有没有人变少」的技能使用。
+   */
+  snapshotVitals() {
+    const map = {};
+    for (const p of this.players) {
+      map[p.id] = { hp: p.hp, hand: p.countCards('h') };
+    }
+    return map;
+  }
+
+  /**
+   * 与快照相比，是否有**其他角色**的体力或手牌数减少
+   * @param {Player} self 使用者本人（不算自己）
+   * @param {object} snap snapshotVitals() 的结果
+   */
+  anyOtherSuffered(self, snap) {
+    if (!snap) return false;
+    for (const p of this.players) {
+      if (p === self) continue;
+      const before = snap[p.id];
+      if (!before) continue;
+      if (p.hp < before.hp) return true;
+      if (p.countCards('h') < before.hand) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 某张牌「现在是否可用」
+   * ------------------------------------------------------------------
+   * 供【剪辑高手】判断中央区的牌能不能被「视为使用」。
+   * 例如全场没人装备武器时，【借刀杀人】不可用。
+   *
+   * 说明：这里只做**粗粒度**的可用性判断（目标是否存在），
+   * 不追求与 UI 的完整合法性校验一致——技能本身允许玩家自行选择，
+   * 这里主要避免「明显不可用」的牌出现在候选里。
+   */
+  cardUsableNow(player, card) {
+    if (!card) return false;
+    const def = CARDS[card.name];
+    if (!def) return false;
+    const alive = this.players.filter((p) => p.alive);
+    const others = alive.filter((p) => p !== player);
+
+    switch (card.name) {
+      case 'sha':
+        // 需要有攻击范围内的目标（或本回合无距离限制）
+        return others.some((p) => this.cardNoDistance(player, card)
+          || player.inAttackRange(p));
+      case 'tao':
+        return player.hp < player.maxHp || player.hp <= 0;
+      case 'juedou':
+      case 'guohe':
+      case 'shunshou':
+      case 'huogong':
+        return others.length > 0;
+      case 'jiedao':
+        // 需要场上有武器，且该武器持有者能打到别人
+        return alive.some((p) => p.equips && p.equips.equip1)
+          && others.length > 0;
+      case 'lebu':
+      case 'bingliang':
+      case 'shandian':
+        return true;
+      case 'nanman':
+      case 'wanjian':
+      case 'wugu':
+      case 'taoyuan':
+        return others.length > 0 || card.name !== 'nanman';
+      case 'tiesuo':
+        return alive.length > 0;
+      case 'jiu':
+        return true;
+      default:
+        if (def.type === 'equip') return true;
+        return true;
+    }
+  }
+
+  /**
+   * 【剪辑高手】的完整结算流程
+   * ------------------------------------------------------------------
+   * 规则（按需求方说明）：
+   *   ① 选一张手牌 A（颜色未被本回合用过）置入弃牌堆（**不进中央区**）；
+   *   ② 选中央区一张**当前可用**的牌 B，视为自己使用 B；
+   *      该操作等价于「用 A 转化为 B 使用」→ 会触发【同步索敌攻击】；
+   *   ③ 若 A 与 B **类型相同** → 可以重复整个流程；
+   *      若 A 与 B **花色相同** → 摸一张牌；
+   *   ④ 「每种颜色每回合各限一次」→ A 的颜色（红/黑）各限一次。
+   */
+  async doJianjiLoop(player) {
+    const MAX_ROUNDS = 8;      // 防止死循环
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const usable = this.centerZone.filter((c) => this.cardUsableNow(player, c));
+      const hand = player.getCards('h');
+      if (!usable.length || !hand.length) return;
+
+      // ---- ① 选一张手牌（颜色需未被用过）----
+      const used = player.flags.jianjiUsed || {};
+      const pickA = await this.io.chooseCards(player, {
+        prompt: `剪辑高手：选择一张手牌置入弃牌堆`
+          + `（本回合已用颜色：${Object.keys(used).map((c) => (c === 'red' ? '红' : '黑')).join('、') || '无'}）`,
+        position: 'h', min: 1, max: 1, cancelable: true,
+        filter: (c) => !used[c.color],
+      });
+      if (!pickA || !pickA.length) return;
+      const A = pickA[0];
+
+      // ---- ② 选中央区一张可用的牌 B ----
+      const pickB = await this.io.chooseCards(player, {
+        prompt: '剪辑高手：选择中央区一张牌，视为你使用之',
+        position: 'center', min: 1, max: 1, cancelable: true,
+        cardList: usable,
+      });
+      if (!pickB || !pickB.length) {
+        // 取消第二段：不弃牌，整个流程结束
+        return;
+      }
+      const B = pickB[0];
+
+      // 记颜色用量
+      used[A.color] = true;
+      player.addFlag('jianjiUsed', used);
+
+      // ---- ③ 把 A 置入弃牌堆（不经过中央区）----
+      await player.loseCards([A]);
+      this.toDiscard([A]);
+      this.log(`${player.name} 发动【剪辑高手】，将 ${A.text} 置入弃牌堆，`
+        + `视为使用中央区的 ${B.fullname}`);
+
+      // ---- ④ 视为使用 B（等价于「用 A 转化为 B 使用」→ 触发二技能）----
+      //    B 本身仍留在中央区（它是被「参照」的牌，不是消耗品）
+      const ghost = this.makeVirtualCard(B);
+      ghost.sourceCards = [A];
+      ghost.jianjiFrom = true;
+      await this.useCard(player, ghost, await this.pickTargetsForVirtual(player, ghost));
+
+      // ---- ⑤ 类型相同 → 重复；花色相同 → 摸一张 ----
+      const sameType = this.cardTypeOf(A) === this.cardTypeOf(B);
+      const sameSuit = A.suit === B.suit;
+      if (sameSuit) {
+        await player.draw(1);
+        this.log(`【剪辑高手】${A.text} 与 ${B.fullname} 花色相同（${A.suitLabel}），摸一张牌`);
+      }
+      if (!sameType) {
+        this.log(`【剪辑高手】${A.text} 与 ${B.fullname} 类型不同，流程结束`);
+        return;
+      }
+      this.log(`【剪辑高手】类型相同，可继续发动`);
+    }
+  }
+
+  /** 牌的类型（用于【剪辑高手】的「类型相同」判定） */
+  cardTypeOf(card) {
+    const def = CARDS[card.name] || {};
+    if (def.type === 'equip') return `equip:${def.subtype || ''}`;
+    if (def.delayed) return 'delay';
+    return def.type || '';
+  }
+
+  /** 由中央区的一张牌造出「虚拟使用」的牌对象（不消耗原牌） */
+  makeVirtualCard(base) {
+    const def = CARDS[base.name] || {};
+    return {
+      name: base.name,
+      fullname: base.fullname || def.fullname || base.name,
+      suit: base.suit,
+      number: base.number,
+      color: base.color,
+      type: def.type,
+      subtype: def.subtype,
+      nature: base.nature || def.nature,
+      zone: 'center',
+      text: base.text,
+      isVirtual: true,
+    };
+  }
+
+  /** 为虚拟使用的牌挑选目标（AI 自动选，人类走 UI） */
+  async pickTargetsForVirtual(player, card) {
+    const def = CARDS[card.name] || {};
+    if (def.type === 'equip') return [];
+    // 无目标类（桃/酒/无中生有等）
+    const selfOnly = ['tao', 'jiu', 'wuzhong', 'wugu', 'taoyuan', 'shandian'];
+    if (selfOnly.includes(card.name)) return [player];
+    const cands = this.players.filter((p) => p.alive && p !== player
+      && this.canBeTargeted(p, card) && this.canTargetByLimits(player, p, card));
+    if (!cands.length) return [];
+    return this.io.chooseTargets(player, {
+      prompt: `【${card.fullname}】请选择目标`,
+      candidates: cands, min: 1, max: 1,
+    });
   }
 
   async equipCard(player, card) {
@@ -2541,7 +3003,6 @@ export class Game {
   async resolveSha(player, card, targets) {
     for (const target of targets) {
       if (!target.alive) continue;
-      if (!target.alive) continue;
       await this.checkSkills('targetConfirm', { player, card, target, source: player, noShan: false });
 
       // 流离等转移
@@ -2562,10 +3023,16 @@ export class Game {
         await this.checkSkills('shaDodged', { player, card, target: realTarget, source: player, forceHit: false });
         if (!realTarget) continue;
         this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
+        // 这张【杀】已结算完（被闪避），酒意不再保留
+        // 参考无名杀 jiu2 挂在 useCardAfter 上：此牌结算完就清
+        this.clearJiu(player);
         continue;
       }
 
       await realTarget.damage(this.shaDamage(player), player, 'sha', card);
+      // 造成伤害时若酒意已用掉，上面 doDamage 已清；若因免疫/防止等原因
+      // 没走到伤害结算，这里兜底清除，避免酒意残留到后续的【杀】
+      this.clearJiu(player);
     }
   }
 
@@ -2896,20 +3363,62 @@ export class Game {
    * 【酒】
    * 参考无名杀 card/extra.js 的 jiu：
    *   - 濒死时使用 → 回复 1 点体力（等同【桃】对自己）
-   *   - 平时使用   → 本回合计入「酒意」，下一张【杀】伤害 +1
-   *   - 每回合限一次（濒死时的使用不计入该限制）
+   *   - 平时使用   → 计入「酒意」，下一张【杀】伤害 +1
+   *   - 每回合限一次（濒死时的使用**不计入**该限制）
+   *
+   * ⚠️ 关键规则（无名杀原版行为，见 extra.js 的 jiu / jiu2）：
+   *
+   *   ① 酒意**只在使用的那个回合内有效**。
+   *      无名杀把 storage.jiu 挂在一个临时技能（temp/vanish）上，
+   *      并在 `phaseAfter` 时移除技能 → `onremove` 里 `delete storage.jiu`。
+   *      所以跨回合不可能残留。这里用 `jiuTurn` 记录生效回合，
+   *      回合结束时由 clearTurnEndJiu() 清理。
+   *
+   *   ② 濒死时用的【酒】**不会**产生酒意。
+   *      无名杀那句是 `target.recover(); ...`，压根没碰 storage.jiu。
+   *      本方法在 hp<=0 分支直接返回，同理不写 storage。
+   *
+   *   ③ 酒意用掉后立即清除；若这张【杀】被【闪】抵消，同样清除
+   *      （无名杀的 jiu2 挂在 `useCardAfter`，即「此牌结算完了」就清）。
+   *
+   *   ④ 保留扩展接口：若角色带 `jiuSustain` 标记（对应无名杀的
+   *      `hasSkillTag("jiuSustain")`），则酒意**不因用掉/回合结束而清除**，
+   *      供未来「酒意可跨回合保留」类武将使用。
    */
   async resolveJiu(player) {
     if (player.hp <= 0) {
+      // 濒死自救：只回血，**不产生酒意**
       player.hp += 1;
-      this.log(`${player.name} 使用【酒】回复 1 点体力`);
+      this.log(`${player.name} 使用【酒】回复 1 点体力（不产生酒意）`);
       this.emit();
       return;
     }
     player.storage.jiu = (player.storage.jiu || 0) + 1;
+    player.storage.jiuTurn = this.turnCount;   // 记录生效回合
     player.addFlag('jiuUsed', (player.flags.jiuUsed || 0) + 1);
     this.log(`${player.name} 使用【酒】，本回合下一张【杀】伤害 +1`);
     this.emit();
+  }
+
+  /** 该角色的酒意是否仍然有效（限本回合；jiuSustain 可豁免） */
+  jiuActive(player) {
+    if (!player || !(player.storage.jiu > 0)) return false;
+    if (player.storage.jiuTurn !== this.turnCount) return false;
+    return true;
+  }
+
+  /**
+   * 清除酒意
+   * @param {Player} player
+   * @param {boolean} force 为 true 时连 jiuSustain 也一并清除（回合结束用）
+   */
+  clearJiu(player, force = false) {
+    if (!player) return;
+    if (!(player.storage.jiu > 0)) return;
+    // 扩展接口：带 jiuSustain 的角色，酒意不因「用掉」而消失
+    if (!force && player.hasFlag && player.hasFlag('jiuSustain')) return;
+    player.storage.jiu = 0;
+    delete player.storage.jiuTurn;
   }
 
   /**
@@ -3082,7 +3591,12 @@ export class Game {
     // 进入接收者手牌
     card.zone = ZONE.HAND;
     card.owner = receiver;
-    card.checkRevealLost(receiver);
+    // ⚠️ 虚拟牌（如【剪辑高手】视为使用的牌）是普通对象，
+    //    没有 Card 类的方法，因此必须判空调用，
+    //    否则会抛 "checkRevealLost is not a function"。
+    if (typeof card.checkRevealLost === 'function') {
+      card.checkRevealLost(receiver);
+    }
     receiver.hand.push(card);
     // 更新装备者的武器相关状态（攻击范围会随之失效）
     if (from) from.equips.equip1 = null;
@@ -3128,8 +3642,18 @@ export class Game {
     if (!sk || sk.type !== 'active') return;
     const ctx = { player, game: this, event: {}, skill: sk };
     if (sk.filter && !sk.filter(ctx)) return;
+
+    // 限定技 / 昂扬技：已用状态下不能再次发动，
+    // 直到昂扬技被「激昂」条件重置（见 tryResetAngyang）。
+    if ((sk.limited || sk.angyang) && isAngyangUsed(player, skillId)) {
+      this.log(`【${sk.name}】已发动过，需要满足激昂条件才能重置`);
+      return;
+    }
+
     player.flags[`skill_${skillId}`] = (player.flags[`skill_${skillId}`] || 0) + 1;
     this.log(`${player.name} 发动【${sk.name}】`);
+    // 昂扬技：发动后标记为已用（可被激昂重置）
+    if (sk.angyang) markAngyangUsed(player, skillId);
     await sk.content(ctx);
     this.emit();
   }

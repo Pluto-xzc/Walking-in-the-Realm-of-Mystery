@@ -566,6 +566,62 @@ html, body {
 }
 
 /* ==========================================================================
+   模式选择 / 身份自选（官方 vs 自由）
+   ========================================================================== */
+.sgs-mode-list,
+.sgs-identity-list {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 6px 4px;
+  overflow-y: auto;
+}
+
+.sgs-mode-pick {
+  padding: 16px 20px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(40,32,24,0.9), rgba(26,21,16,0.95));
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.sgs-mode-pick:hover {
+  transform: translateY(-2px);
+  border-color: var(--gold-light);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 16px rgba(232,196,90,0.35);
+}
+.sgs-mode-title {
+  font-size: 17px; font-weight: 700; color: var(--gold-light);
+  letter-spacing: 2px; margin-bottom: 6px;
+  font-family: "KaiTi", "STKaiti", serif;
+}
+.sgs-mode-desc { font-size: 13px; color: #cbbfa8; margin-bottom: 4px; }
+.sgs-mode-detail { font-size: 11.5px; color: #8a7d6b; }
+
+.sgs-identity-pick {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--id-color) 34%, rgba(26,21,16,0.95)),
+    rgba(26,21,16,0.95));
+  border: 1px solid color-mix(in srgb, var(--id-color) 60%, transparent);
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.sgs-identity-pick:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 16px color-mix(in srgb, var(--id-color) 55%, transparent);
+}
+.sgs-identity-badge-inline {
+  flex-shrink: 0;
+  font-size: 13px; font-weight: 700; color: #fff;
+  padding: 3px 12px; border-radius: 5px;
+  background: var(--id-color);
+  border: 1px solid rgba(255,255,255,0.3);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.55);
+}
+.sgs-identity-desc { font-size: 12.5px; color: #cbbfa8; }
+
+/* ==========================================================================
    身份标记菜单
    ========================================================================== */
 .sgs-identity-badge.clickable { cursor: pointer; }
@@ -936,6 +992,19 @@ html, body {
 }
 .sgs-prompt.hidden { display: none; }
 
+/*
+  提示条的副文字（操作说明）
+  ------------------------------------------------------------------
+  与主提示同一行显示，用分隔号隔开，颜色更淡以示次要。
+  主提示里的 \n（技能名 / 技能描述两行）由 white-space: pre-line 处理。
+*/
+.sgs-prompt .sgs-prompt-sep {
+  opacity: 0.35; margin: 0 8px;
+}
+.sgs-prompt .sgs-prompt-sub {
+  font-size: 11.5px; color: #9a8b78;
+}
+
 /* 处理区（正在结算的牌） */
 .sgs-processing {
   display: flex; gap: 6px; justify-content: center;
@@ -1090,11 +1159,24 @@ html, body {
   放在这里既填满空位，又让确认操作紧靠角色信息，不再飘在屏幕中间。
   加了 margin-left:auto 之前它是紧跟 .sgs-self-info 的，所以用 auto 靠右。
 */
-.sgs-self-info-actions {
-  display: flex; align-items: center; gap: 8px;
+/*
+  武将信息右侧：选项按钮 + 选牌提示条
+  ------------------------------------------------------------------
+  名字/体力之后原本有一大片空白，把这些交互元素放这里，
+  既填满空位，又避免遮挡下方的装备栏。
+*/
+.sgs-self-right {
+  display: flex; flex-direction: column; align-items: flex-end;
+  justify-content: center; gap: 4px;
   margin-left: auto;          /* 推到整行最右 */
   padding-right: 4px;
-  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 68%;             /* 给左侧武将信息留出空间 */
+}
+
+.sgs-self-info-actions {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; justify-content: flex-end;
 }
 .sgs-self-info-actions:empty { display: none; }
 .sgs-self-info-actions .sgs-act-btn {
@@ -1452,6 +1534,30 @@ html, body {
   margin-top: 7px; font-size: 10.5px; color: #6b6255;
 }
 
+/* ------------------------------------------------------------------
+   角色详情（右键武将牌）的附加区块
+   ------------------------------------------------------------------ */
+.sgs-detail-pop .dp-row {
+  font-size: 12px; color: #cbbfa8; margin-bottom: 4px;
+}
+.sgs-detail-pop .dp-sec {
+  margin-top: 9px; padding-top: 7px;
+  border-top: 1px solid rgba(212,160,23,0.22);
+  font-size: 11px; color: var(--gold-light);
+  letter-spacing: 1px; margin-bottom: 4px;
+}
+.sgs-detail-pop .dp-skill {
+  margin-bottom: 5px; color: #d8cfbe;
+}
+.sgs-detail-pop .dp-skill b { color: var(--gold-light); }
+/* 除外区：主人看到具体牌名，用高亮区分 */
+.sgs-detail-pop .dp-excluded {
+  color: #9fd4e8;
+}
+.sgs-detail-pop .dp-excluded.dim {
+  color: #8a7d6b; font-style: italic;
+}
+
 /* ==========================================================================
    操作区
    ========================================================================== */
@@ -1688,21 +1794,30 @@ html, body {
 /* ==========================================================================
    选牌/选目标遮罩提示
    ========================================================================== */
+/*
+  选牌 / 选目标 提示条
+  ------------------------------------------------------------------
+  ⚠️ 原来是 position:fixed; bottom:0 的全宽浮层，正好压住装备区
+  （武器/防具/宝物/坐骑全被盖住）。改成普通文档流元素，
+  放在武将信息右侧的空位上，不再遮挡任何东西。
+*/
 .sgs-select-hint {
-  position: fixed; bottom: 0; left: 0; right: 0;
-  z-index: 7000;
-  padding: 12px 16px;
-  background: linear-gradient(180deg, rgba(20,16,13,0.7), rgba(20,16,13,0.97));
-  border-top: 1px solid rgba(212, 160, 23, 0.4);
   display: none;
-  flex-direction: column; gap: 8px;
-  align-items: center;
+  align-items: center; gap: 10px;
+  padding: 4px 10px;
+  background: rgba(20, 16, 13, 0.85);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  border-radius: 7px;
+  max-width: 100%;
 }
 .sgs-select-hint.active { display: flex; }
 .sgs-select-hint .hint-text {
-  font-size: 14px; color: var(--gold-light); text-align: center;
+  font-size: 12.5px; color: var(--gold-light); text-align: right;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
-.sgs-select-hint .hint-btns { display: flex; gap: 10px; }
+.sgs-select-hint .hint-btns { display: flex; gap: 8px; flex-shrink: 0; }
+.sgs-select-hint .sgs-act-btn { font-size: 12.5px; padding: 5px 14px; }
 
 /* ==========================================================================
    响应式

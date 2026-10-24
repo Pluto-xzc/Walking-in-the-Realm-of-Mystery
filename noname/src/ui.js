@@ -8,9 +8,9 @@
  */
 
 import { CARDS, numberLabel, SUITS, EQUIP_SLOTS, EQUIP_SLOT_MAP } from './cards.js';
-import { CHARACTERS, GROUPS } from './characters.js';
+import { CHARACTERS, GROUPS, PACKS, packOf, pickerTabs } from './characters.js';
 import { SKILLS } from './skills.js';
-import { IDENTITY_LABEL, IDENTITY_COLOR } from './match.js';
+import { IDENTITY_LABEL, IDENTITY_COLOR, CHOICE_NUM } from './match.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -34,8 +34,30 @@ function el(tag, cls, html) {
  * 改为绝对路径后，无论页面在 /noname/ 还是 /noname/index.html 都正确。
  */
 
+/**
+ * 指定立绘的**外部来源**（仓库里已有的图片）
+ * ------------------------------------------------------------------
+ * 站点结构里，仓库根目录下有 images/character/<原名>.png，
+ * 里面已经放好了本扩武将的原画，**不需要再往 noname/character/ 传一份**。
+ *
+ * 这里把「武将 id」映射到「仓库里的文件名」，charImgPath 会优先用它。
+ * 网页会自行缩放显示（CSS object-fit: cover），大图也不影响布局。
+ */
+const CHAR_IMAGE_ALIAS = {
+  // 折桠 → 仓库 images/character/折桠.png
+  zheya: '折桠',
+  // 卡达 → 仓库 images/character/卡达.png（若不存在会自动回退占位图）
+  kada: '卡达',
+};
+
 /** 武将立绘路径（你放置的 PNG；不存在时自动回退到占位图） */
 export function charImgPath(id) {
+  // ① 优先用「仓库已有图片」的映射（无需另传文件）
+  const alias = CHAR_IMAGE_ALIAS[id];
+  if (alias) {
+    return `/images/character/${encodeURIComponent(alias)}.png`;
+  }
+  // ② 其次用 noname/character/<id>.png（自备立绘时用）
   return `/noname/character/${id}.png`;
 }
 
@@ -351,7 +373,127 @@ export class UI {
    *   - 每张武将卡右上角有收藏星标，点击切换收藏
    *   - 收藏持久化到 localStorage
    */
-  chooseCharacter(charIds, isLord) {
+  /**
+   * 选择对局模式
+   * ------------------------------------------------------------------
+   * 官方：先随机分发身份 → 按身份给候选武将（主公多、反贼少）
+   * 自由：自选身份 + 全部武将池任选（测试武将 / 自由对局用）
+   *
+   * @returns {Promise<'official'|'free'>}
+   */
+  chooseMode() {
+    return new Promise((resolve) => {
+      const modal = $('#sgs-char-modal');
+      modal.classList.add('active');
+      const box = $('.sgs-modal-box', modal);
+      box.innerHTML = '';
+      box.classList.add('sgs-char-box');
+
+      box.appendChild(el('div', 'sgs-modal-title', '选 择 模 式'));
+      box.appendChild(el('div', 'sgs-modal-sub', '官方模式为默认玩法；自由模式用于测试武将与自由对局'));
+
+      const list = el('div', 'sgs-mode-list');
+      const MODES = [
+        {
+          key: 'official',
+          title: '官 方 模 式',
+          desc: '先随机分发身份，再按身份给出候选武将',
+          detail: `主公 ${CHOICE_NUM.zhu} 名 / 忠臣 ${CHOICE_NUM.zhong} 名`
+            + ` / 内奸 ${CHOICE_NUM.nei} 名 / 反贼 ${CHOICE_NUM.fan} 名候选`,
+        },
+        {
+          key: 'free',
+          title: '自 由 模 式',
+          desc: '自己选身份，并从全部武将中任选',
+          detail: '用于测试武将技能或自由对局',
+        },
+      ];
+      MODES.forEach((m) => {
+        const card = el('div', 'sgs-mode-pick');
+        card.appendChild(el('div', 'sgs-mode-title', m.title));
+        card.appendChild(el('div', 'sgs-mode-desc', m.desc));
+        card.appendChild(el('div', 'sgs-mode-detail', m.detail));
+        card.addEventListener('click', () => {
+          modal.classList.remove('active');
+          box.classList.remove('sgs-char-box');
+          resolve(m.key);
+        });
+        list.appendChild(card);
+      });
+      box.appendChild(list);
+    });
+  }
+
+  /**
+   * 选择身份
+   * ------------------------------------------------------------------
+   * 官方身份模式的流程是「先给身份，再按身份给候选武将」。
+   * 这里为「自选身份」模式提供界面：让玩家挑一个身份用于测试/自由对局。
+   *
+   * @param {string[]} options 可选身份（如 ['zhu','zhong','fan','nei']）
+   * @param {string} title
+   * @returns {Promise<string>} 选中的身份
+   */
+  chooseIdentity(options, title = '选 择 身 份') {
+    return new Promise((resolve) => {
+      const modal = $('#sgs-char-modal');
+      modal.classList.add('active');
+      const box = $('.sgs-modal-box', modal);
+      box.innerHTML = '';
+      box.classList.add('sgs-char-box');
+
+      box.appendChild(el('div', 'sgs-modal-title', title));
+      box.appendChild(el('div', 'sgs-modal-sub',
+        '自选身份用于测试武将或自由对局；正常对局请用「身份随机」'));
+
+      const list = el('div', 'sgs-identity-list');
+      const DESC = {
+        zhu: '主公：体力上限 +1，从常备主公里选择',
+        zhong: '忠臣：保护主公，与主公同生共死',
+        fan: '反贼：击杀主公即可获胜',
+        nei: '内奸：存活到最后，与主公单挑获胜',
+      };
+      options.forEach((id) => {
+        const card = el('div', 'sgs-identity-pick');
+        card.style.setProperty('--id-color', IDENTITY_COLOR[id] || '#888');
+        const badge = el('span', 'sgs-identity-badge-inline', IDENTITY_LABEL[id] || id);
+        card.appendChild(badge);
+        card.appendChild(el('div', 'sgs-identity-desc', DESC[id] || ''));
+        // 用 addEventListener 而不是 onclick，避免被后续赋值覆盖；
+        // 同时整张卡片可点（子元素点击会冒泡上来）。
+        card.addEventListener('click', () => {
+          modal.classList.remove('active');
+          box.classList.remove('sgs-char-box');
+          resolve(id);
+        });
+        list.appendChild(card);
+      });
+      box.appendChild(list);
+
+      // 可以返回（走随机）
+      const back = el('button', 'sgs-act-btn', '返回（身份随机）');
+      back.onclick = () => {
+        modal.classList.remove('active');
+        box.classList.remove('sgs-char-box');
+        resolve(null);
+      };
+      const footer = el('div', 'sgs-char-footer');
+      footer.appendChild(el('div', 'sgs-char-picked', ''));
+      footer.appendChild(back);
+      box.appendChild(footer);
+    });
+  }
+
+  /**
+   * 选择武将
+   * @param {string[]} charIds 候选武将
+   * @param {boolean} isLord 是否为主公（文案与提示不同）
+   * @param {object} [ctx] 额外上下文
+   * @param {string} [ctx.identity] 当前身份，用于标题提示
+   * @param {string} [ctx.ruleText] 规则说明（如「主公候选 10 人」）
+   * @param {boolean} [ctx.freeMode] 是否自由模式（全部武将池）
+   */
+  chooseCharacter(charIds, isLord, ctx = {}) {
     return new Promise((resolve) => {
       const modal = $('#sgs-char-modal');
       modal.classList.add('active');
@@ -360,18 +502,20 @@ export class UI {
       box.innerHTML = '';
       box.classList.add('sgs-char-box');
 
-      box.appendChild(el('div', 'sgs-modal-title', isLord ? '选 择 主 公' : '选 择 武 将'));
-      box.appendChild(el('div', 'sgs-modal-sub',
-        isLord ? '你是主公，请从常备主公中选择一名' : '请选择一名武将开始游戏'));
+      box.appendChild(el('div', 'sgs-modal-title',
+        isLord ? '选 择 主 公' : '选 择 武 将'));
+      // 副标题：把「当前身份 + 候选规则」讲清楚
+      const subText = ctx.ruleText
+        || (isLord ? '你是主公，请从常备主公中选择一名' : '请选择一名武将开始游戏');
+      box.appendChild(el('div', 'sgs-modal-sub', subText));
 
-      // ---------------- 势力标签栏 ----------------
+      // ---------------- 标签栏 ----------------
+      // 分类与势力合并生成：若两者指同一个东西（如「再探泰拉」=「舟」），
+      // 只保留一个，避免出现内容完全相同的两个标签。
       const TABS = [
         { key: 'all', label: '全' },
         { key: 'fav', label: '⭐' },
-        { key: 'wei', label: '魏' },
-        { key: 'shu', label: '蜀' },
-        { key: 'wu', label: '吴' },
-        { key: 'qun', label: '群' },
+        ...pickerTabs(),
       ];
       let currentTab = 'all';
       let picked = null;
@@ -397,12 +541,21 @@ export class UI {
       const renderGrid = () => {
         grid.innerHTML = '';
         let list = charIds.slice();
-        if (currentTab === 'fav') list = list.filter((id) => this.isFavorite(id));
-        else if (currentTab !== 'all') list = list.filter((id) => CHARACTERS[id].group === currentTab);
+        if (currentTab === 'fav') {
+          list = list.filter((id) => this.isFavorite(id));
+        } else if (currentTab.startsWith('pack:')) {
+          const pk = currentTab.slice(5);
+          list = list.filter((id) => packOf(id) === pk);
+        } else if (currentTab.startsWith('group:')) {
+          const gk = currentTab.slice(6);
+          list = list.filter((id) => CHARACTERS[id].group === gk);
+        }
 
         if (!list.length) {
-          grid.appendChild(el('div', 'sgs-char-empty',
-            currentTab === 'fav' ? '还没有收藏的武将（点击武将卡右上角的 ☆ 收藏）' : '该势力暂无武将'));
+          const empty = currentTab === 'fav'
+            ? '还没有收藏的武将（点击武将卡右上角的 ☆ 收藏）'
+            : currentTab.startsWith('pack:') ? '该分类暂无武将' : '该势力暂无武将';
+          grid.appendChild(el('div', 'sgs-char-empty', empty));
           return;
         }
 
@@ -562,11 +715,28 @@ export class UI {
             <div class="sgs-skill-btns" id="sgs-self-skills"></div>
           </div>
           <!--
-            选项按钮区：位于武将信息**右侧**的空白处。
-            名字/体力之后的横向空白用来放「发动 / 不发动」这类按钮，
-            既填满了空位，又让确认操作靠近角色信息、远离手牌。
+            选项按钮区 + 选牌提示条：位于武将信息**右侧**的空白处。
+            名字/体力之后的横向空白用来放「发动 / 不发动」「确定 / 取消」
+            这类按钮，既填满了空位，又不遮挡下方的装备栏。
           -->
-          <div class="sgs-self-info-actions" id="sgs-self-info-actions"></div>
+          <div class="sgs-self-right" id="sgs-self-right">
+            <div class="sgs-self-info-actions" id="sgs-self-info-actions"></div>
+            <!--
+              选牌/选目标提示条
+              ----------------------------------------------------------
+              ⚠️ 历史问题：它原本是 position:fixed 贴在屏幕底部，
+              正好**压住装备区**（武器/防具/坐骑全被挡住）。
+              现在改成普通文档流元素，放在武将信息右侧的空位上，
+              既不遮挡装备栏，也不额外占高度。
+            -->
+            <div class="sgs-select-hint" id="sgs-select-hint">
+              <div class="hint-text" id="sgs-hint-text"></div>
+              <div class="hint-btns">
+                <button class="sgs-act-btn primary" id="sgs-hint-ok">确 定</button>
+                <button class="sgs-act-btn" id="sgs-hint-cancel">取 消</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- 结束回合按钮：独立一行，位于武将信息下方 -->
@@ -578,13 +748,6 @@ export class UI {
         -->
         <div class="sgs-prompt hidden" id="sgs-prompt"></div>
         <div class="sgs-actions" id="sgs-actions"></div>
-        <div class="sgs-select-hint" id="sgs-select-hint">
-          <div class="hint-text" id="sgs-hint-text"></div>
-          <div class="hint-btns">
-            <button class="sgs-act-btn primary" id="sgs-hint-ok">确 定</button>
-            <button class="sgs-act-btn" id="sgs-hint-cancel">取 消</button>
-          </div>
-        </div>
 
         <!-- 手牌区：贴紧屏幕底部 -->
         <div class="sgs-self-hand" id="sgs-self-hand"></div>
@@ -936,7 +1099,8 @@ export class UI {
     const g = this.game;
     if (!g) return out;
 
-    if ((p.storage.jiu || 0) > 0) {
+    // 酒意：只在「产生它的那个回合」内显示，避免跨回合的过期标记
+    if (g.jiuActive(p)) {
       out.push({
         label: `酒意 ×${p.storage.jiu}`,
         icon: '🍶',
@@ -1026,6 +1190,79 @@ export class UI {
       <div class="dp-desc">${(skill.desc || '（暂无描述）').replace(/\n/g, '<br>')}</div>
       <div class="dp-hint">右键其他技能/牌可查看对应详情</div>
     `;
+    this.showDetailPop(html, ev);
+  }
+
+  /**
+   * 显示角色详情（右键武将牌）
+   * ------------------------------------------------------------------
+   * 除了基础信息，还汇总那些「不属于公开区域、但需要能查到」的内容。
+   * 目前包含：
+   *   ① 除外区（本扩机制）
+   *      - 自己：显示每张牌的具体内容
+   *      - 他人：只显示数量（按机制规则，他人不可见内容）
+   *   ② 判定区牌
+   *   ③ token（标记）
+   *
+   * 以后有类似的「需要查询但不在牌桌上」的信息，也统一加到这里。
+   */
+  showPlayerDetail(player, ev) {
+    if (!player) return;
+    const g = this.game;
+    const me = g ? (g.players.find((p) => p.isHuman) || g.players[0]) : null;
+    const grp = GROUPS[player.group] || { label: '?', color: '#666' };
+    const idLabel = IDENTITY_LABEL[player.identity] || '';
+
+    /* ---- 头部 ---- */
+    let html = `
+      <div class="dp-title">${player.name}</div>
+      <div class="dp-sub">${grp.label}　${idLabel}`
+      + `${player.isZhu ? ' · 主公' : ''}　${player.alive ? '' : '已阵亡'}</div>
+      <div class="dp-row">体力：${player.hp}/${player.maxHp}`
+      + `　｜　护甲：${player.hujia || 0}</div>
+    `;
+
+    /* ---- 技能 ---- */
+    if (player.skills && player.skills.length) {
+      const list = player.skills
+        .map((sid) => SKILLS[sid])
+        .filter(Boolean)
+        .map((s) => `<div class="dp-skill"><b>${s.name}</b>`
+          + `${s.locked ? '（锁定技）' : ''}：${s.desc || ''}</div>`)
+        .join('');
+      html += `<div class="dp-sec">技能</div><div class="dp-desc">${list}</div>`;
+    }
+
+    /* ---- 除外区（本扩机制）---- */
+    const ex = player.excluded || [];
+    if (ex.length) {
+      // 可见性：主人看内容，他人只看数量
+      const isOwner = me === player;
+      if (isOwner) {
+        const cards = ex.map((c) => `${c.text}`).join('、');
+        html += `<div class="dp-sec">除外区（${ex.length} 张）</div>`
+          + `<div class="dp-desc dp-excluded">${cards}</div>`;
+      } else {
+        html += `<div class="dp-sec">除外区</div>`
+          + `<div class="dp-desc dp-excluded dim">`
+          + `共有 ${ex.length} 张牌被除外（内容不可见）</div>`;
+      }
+    }
+
+    /* ---- 判定区 ---- */
+    if (player.judges && player.judges.length) {
+      const js = player.judges.map((c) => c.fullname).join('、');
+      html += `<div class="dp-sec">判定区</div><div class="dp-desc">${js}</div>`;
+    }
+
+    /* ---- token ---- */
+    const tokens = this.collectTokens ? this.collectTokens(player) : [];
+    if (tokens.length) {
+      const ts = tokens.map((t) => `${t.icon || '◆'} ${t.label}`).join('　');
+      html += `<div class="dp-sec">标记</div><div class="dp-desc">${ts}</div>`;
+    }
+
+    html += `<div class="dp-hint">右键其他角色/技能/牌可查看对应详情</div>`;
     this.showDetailPop(html, ev);
   }
 
@@ -1192,6 +1429,12 @@ export class UI {
     node.dataset.pid = p.id;
     if (!p.alive) node.classList.add('dead');
     if (g.currentPlayer === p) node.classList.add('current-turn');
+
+    // 右键武将牌 → 角色详情（含除外区等信息）
+    node.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      this.showPlayerDetail(p, ev);
+    };
 
     // 头像
     const avWrap = el('div', 'sgs-avatar-wrap');
@@ -1408,6 +1651,11 @@ export class UI {
     // 头像
     const av = $('#sgs-self-avatar');
     av.innerHTML = '';
+    // 右键自己的武将牌 → 角色详情（含自己的除外区内容）
+    av.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      this.showPlayerDetail(me, ev);
+    };
     const img = el('img');
     img.alt = me.name;
     bindImageFallback(img, me.charId, me.name, { avatar: false });
@@ -1844,14 +2092,46 @@ export class UI {
     panel.scrollTop = panel.scrollHeight;
   }
 
+  /**
+   * 设置提示条主文字
+   * @param {string} text 主提示。支持 \n 换行（如技能名 + 技能描述两行）
+   */
   setPrompt(text) {
     const p = $('#sgs-prompt');
     if (text) {
+      // 重设主文字前，先摘掉旧的副文字（避免残留上一轮的说明）
+      const oldSep = p.querySelector('.sgs-prompt-sep');
+      const oldSub = p.querySelector('.sgs-prompt-sub');
+      if (oldSep) oldSep.remove();
+      if (oldSub) oldSub.remove();
       p.textContent = text;
       p.classList.remove('hidden');
     } else {
+      p.textContent = '';
       p.classList.add('hidden');
     }
+  }
+
+  /**
+   * 设置提示条的「副文字」（操作说明等）
+   * ----------------------------------------------------------------
+   * 需求：把「点击下方手牌以使用…」这类说明与主提示放在同一行，
+   * 不再单独占一行、也不再压到手牌/装备区上面。
+   *
+   * 实现：主提示写进 #sgs-prompt 的文本节点，副文字作为
+   * 一个 .sgs-prompt-sub 的 span 追加在后面，中间用分隔号隔开。
+   */
+  setPromptSub(subText) {
+    const p = $('#sgs-prompt');
+    if (!p) return;
+    // 先清掉旧的副文字
+    const old = p.querySelector('.sgs-prompt-sub');
+    if (old) old.remove();
+    if (!subText) return;
+    const sep = el('span', 'sgs-prompt-sep', '｜');
+    const sub = el('span', 'sgs-prompt-sub', subText);
+    p.appendChild(sep);
+    p.appendChild(sub);
   }
 
   /* ---------------- io 实现 ---------------- */
@@ -2271,7 +2551,13 @@ export class UI {
 
       const hand = player.hand;
 
+      /*
+       * 提示文字与操作说明**合并到同一行**，不再单独占一行。
+       * 由 .sgs-prompt 的 .sgs-prompt-sub 子元素呈现，
+       * 视觉上与主提示同一行（用分隔号隔开）。
+       */
       this.setPrompt('出牌阶段：请选择要使用的牌');
+      this.setPromptSub('点击下方手牌以使用；需要选择目标时按提示点击角色');
       this._hideHint();
 
       const cleanup = () => {
@@ -2299,10 +2585,7 @@ export class UI {
       this.renderEndTurnRow(player);
 
       // 手牌点击即使用
-      const hint = el('div', 'hint-text');
-      hint.style.cssText = 'font-size:12px;color:#9a8b78;width:100%;text-align:center;';
-      hint.textContent = '点击下方手牌以使用；需要选择目标时按提示点击角色';
-      wrap.appendChild(hint);
+      // （操作说明已并入上方提示行，这里不再单独插一个 div，省一行高度）
 
       // 绑定手牌点击（只响应手牌区，不响应装备区）
       $('#sgs-self-hand').onclick = async (e) => {

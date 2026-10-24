@@ -1033,6 +1033,274 @@ export const SKILLS = {
       hpCardExchange: () => true,
     },
   },
+
+  /* ======================= 再探泰拉（本扩） ======================= */
+
+  /**
+   * 折桠·无我入春时
+   * ==================================================================
+   * 描述（需求方给定，逐字遵循）：
+   *   每个回合此技能只能使用 1 次。有角色受到伤害时，如果那次的伤害
+   *   要让体力值确切减小（包含角色没有护甲、或者伤害大于护甲），
+   *   那么你可以流失 1 点体力，防止那次的伤害。
+   *   如果发动此技能的「让你流失 1 点体力」导致你濒死，则你直接恢复
+   *   体力值直到 1，那之后，这个回合没有使用过牌、但是成为过牌的目标
+   *   的其他角色，以及你，各获得 1 点护甲。
+   *
+   * 关键裁定（已与需求方确认）：
+   *   ① 「伤害要让体力值确切减小」= 最终伤害值 > 该角色当前护甲
+   *      （无护甲即护甲为 0，此时任何 >0 的伤害都算）。
+   *   ② 「有角色受到伤害」= **任意角色**，包括别人。
+   *   ③ 给护甲时：其他角色需满足「本回合未使用过牌、但成为过牌的目标」；
+   *      **你自己默认在名单里**（不需要满足该条件）。
+   *
+   * 时机：damageBegin —— 在伤害数值三级管线算完之后（引擎保证），
+   *       此时 ev.num 已是最终伤害；置 ev.prevented 即可防止。
+   */
+  wuworuchunshi: {
+    id: 'wuworuchunshi', name: '无我入春时',
+    desc: '每回合限一次。有角色受到伤害时，若此伤害会确切减少其体力'
+      + '（该角色无护甲，或伤害大于其护甲），你可以流失 1 点体力并防止之。'
+      + '若因此进入濒死，你回复体力至 1，然后本回合未使用过牌但成为过牌'
+      + '目标的其他角色与你各获得 1 点护甲。',
+    type: 'trigger', trigger: 'damageBegin',
+    // 归属：任意角色受伤都可能是发动契机，故不受归属闸门限制
+    scope: 'any',
+    filter: (ctx) => {
+      const ev = ctx.event;
+      if (!ev || ev.prevented) return false;
+      if (ev.num <= 0) return false;
+      // 每回合限一次
+      if (ctx.player.flags.wuworuchunshiUsed === ctx.game.turnCount) return false;
+      const target = ev.player;
+      if (!target || !target.alive) return false;
+      // 伤害必须会「确切减小体力」：最终伤害 > 当前护甲
+      const armor = target.hujia || 0;
+      return ev.num > armor;
+    },
+    async content(ctx) {
+      const { player, game } = ctx;
+      const ev = ctx.event;
+      const victim = ev.player;
+
+      // 标记本回合已用
+      player.addFlag('wuworuchunshiUsed', game.turnCount);
+
+      // ① 自己流失 1 点体力
+      // ------------------------------------------------------------
+      // 裁定（按需求方说明）：
+      //   这次**确实是流失体力**（所以写进日志、也照常扣体力），
+      //   但「因这次流失体力而进入的濒死结算**不触发**」——
+      //   即跳过濒死/求桃流程，直接按技能描述恢复体力至 1。
+      //
+      // 因此这里不能用 player.loseHp(1)：
+      //   loseHp 在 hp<=0 时会走完整的 enterDying（求桃、可能阵亡），
+      //   与本技能的裁定不符。
+      // 改为在引擎提供的 suppressDying 通道下扣血，
+      // 由引擎保证「本次流失不触发濒死结算」。
+      game.log(`${player.name} 发动【无我入春时】，流失 1 点体力`
+        + `以防止 ${victim.name} 受到的 ${ev.num} 点伤害`);
+      const wentDying = await game.loseHpWithoutDying(player, 1);
+
+      // ② 防止该次伤害
+      ev.prevented = true;
+      game.log(`${victim.name} 受到的伤害被【无我入春时】防止`);
+
+      if (!wentDying) return;
+
+      // ③ 因本技能而「本应濒死」→ 直接恢复体力至 1
+      //    （濒死结算已被跳过，所以这里只是把体力补回 1）
+      player.hp = 1;
+      game.log(`${player.name} 因【无我入春时】流失体力将进入濒死，`
+        + `不触发濒死结算，直接回复体力至 1`);
+      game.emit();
+
+      // ④ 给护甲：本回合未使用过牌、但成为过牌目标的其他角色 + 自己
+      //    （你自己**默认在名单里**，不需要满足该条件）
+      const gains = [player];
+      for (const p of game.players) {
+        if (p === player || !p.alive) continue;
+        const used = game.hasUsedCardThisTurn(p);
+        const targeted = game.hasBeenTargetedThisTurn(p);
+        if (!used && targeted) gains.push(p);
+      }
+      for (const p of gains) {
+        await p.changeHujia(1);
+      }
+      game.log(`【无我入春时】${gains.map((p) => p.name).join('、')} 各获得 1 点护甲`);
+      game.emit();
+    },
+  },
+
+  /**
+   * 折桠·星火尽染寒
+   * ==================================================================
+   * 描述（需求方给定）：
+   *   你的出牌阶段开始时，你可以摸 X 张牌（X 是你已经损失的体力值 +2），
+   *   这些摸到的牌使用的时候没有距离限制，没有次数限制。
+   *   如果你发动了这个技能，这个回合你使用的牌，只能指定符合以下条件
+   *   角色，其他角色不能成为目标（若为南蛮这种牌，则不再是全部其他角色
+   *   而是符合条件的全部其他角色）：
+   *     手牌数不小于你的角色；体力值不小于你的角色
+   *
+   * 关键裁定（已与需求方确认）：
+   *   目标限制覆盖**该回合你使用的所有牌**，而不只是摸到的那 X 张。
+   */
+  xinghuojinranhan: {
+    id: 'xinghuojinranhan', name: '星火尽染寒',
+    desc: '出牌阶段开始时，你可以摸 X 张牌（X 为你已损失的体力值 +2），'
+      + '这些牌无距离与次数限制。若你如此做，本回合你使用的牌只能指定'
+      + '手牌数不小于你、或体力值不小于你的角色为目标。',
+    type: 'trigger', trigger: 'phaseUseBegin',
+    async content(ctx) {
+      const { player, game } = ctx;
+      // X = 已损失体力 + 2
+      const lost = Math.max(0, (player.maxHp || 0) - (player.hp || 0));
+      const x = lost + 2;
+
+      const cards = await player.draw(x);
+      game.log(`${player.name} 发动【星火尽染寒】，已损体力 ${lost}`
+        + `，摸 ${x} 张牌`);
+
+      /*
+       * 这批牌「无距离、无次数限制」+ 本回合所有牌的目标限制。
+       * 用回合标记实现，弃牌阶段结束后随 flags 清空自然失效。
+       */
+      player.addFlag('xinghuoActive', game.turnCount);
+      // 本回合【杀】无次数限制
+      player.addFlag('shaNoLimitThisTurn', true);
+
+      // 摸到的牌单独打标（供 UI 提示「这些牌无距离限制」）
+      for (const c of cards || []) {
+        c.gaintag = c.gaintag || [];
+        if (!c.gaintag.includes('xinghuo')) c.gaintag.push('xinghuo');
+      }
+      game.emit();
+    },
+    mod: {
+      /**
+       * 目标限制：本回合你使用的牌只能指定
+       * 「手牌数不小于你」或「体力值不小于你」的角色。
+       *
+       * 说明：
+       *  - 只在发动过【星火尽染寒】的本回合生效；
+       *  - 群体锦囊（南蛮/万箭）也走这个判断，
+       *    因此自动变成「符合条件的全部其他角色」。
+       */
+      targetLimit: (card, source, target, info) => {
+        const game = info && info.game;
+        if (!game) return true;
+        if (source.flags.xinghuoActive !== game.turnCount) return true;
+        // 自己不受限制（描述只约束「角色」目标）
+        if (target === source) return true;
+        const handOk = target.countCards('h') >= source.countCards('h');
+        const hpOk = (target.hp || 0) >= (source.hp || 0);
+        return handOk || hpOk;
+      },
+      /** 无距离限制：本回合你使用的牌不受距离约束 */
+      trickNoDistance: (player, game) => {
+        if (!game) return false;
+        return player.flags.xinghuoActive === game.turnCount;
+      },
+    },
+  },
+
+  /* ======================= 再探泰拉 · 卡达 ======================= */
+
+  /**
+   * 卡达·剪辑高手
+   * ==================================================================
+   * 描述（需求方给定）：
+   *   每种颜色每回合各限一次。每回合结束时，你可将一张手牌置入弃牌堆，
+   *   视为中央区一张牌使用之；若二者：
+   *     类型相同，你重复此流程；
+   *     花色相同，你摸一张牌。
+   *
+   * 关键裁定（已与需求方确认）：
+   *   ① 把手牌 A 直接放入弃牌堆（**不经过中央区**），
+   *      然后「视为自己使用中央区的一张牌 B」。
+   *      B 必须**当前可用**（例如全场没人有武器时不能选【借刀杀人】）。
+   *   ② 「二者」= 弃掉的牌 A ↔ 中央区那张牌 B，比较它们的类型与花色。
+   *   ③ 这个操作本质是「用 A 转化为 B 使用」，
+   *      因此**能触发【同步索敌攻击】**（见该技能的转化处理）。
+   *
+   * 「每种颜色每回合各限一次」= 弃掉的那张牌的颜色（红/黑）各限一次。
+   */
+  jianjigaoshou: {
+    id: 'jianjigaoshou', name: '剪辑高手',
+    desc: '每种颜色每回合各限一次。回合结束时，你可以将一张手牌置入弃牌堆，'
+      + '视为使用中央区的一张牌；若二者类型相同，你可以重复此流程；'
+      + '若二者花色相同，你摸一张牌。',
+    type: 'trigger', trigger: 'turnEnd',
+    filter: (ctx) => {
+      const { player, game } = ctx;
+      // 本回合该颜色是否已用过
+      const used = player.flags.jianjiUsed || {};
+      const colorFree = ['red', 'black'].some((c) => !used[c]);
+      if (!colorFree) return false;
+      if (!player.countCards('h')) return false;
+      // 中央区要有「当前可用」的牌
+      return game.centerZone.some((c) => game.cardUsableNow(player, c));
+    },
+    async content(ctx) {
+      const { player, game } = ctx;
+      await game.doJianjiLoop(player);
+    },
+  },
+
+  /**
+   * 卡达·同步索敌攻击
+   * ==================================================================
+   * 描述（需求方给定）：
+   *   你使用的牌结算后若有其他角色体力或手牌数减少，你摸一张牌；
+   *   此技能获得的牌不计入手牌上限且使用时不受距离限制，
+   *   若将之转化其他牌使用，你摸一张牌。
+   *
+   * 关键裁定（已与需求方确认）：
+   *   ① 「其他角色体力或手牌数减少」= 与该牌使用前相比，任一其他角色的
+   *      体力值或手牌数变小了（自己不算）。
+   *   ② 「若将之转化其他牌使用，你摸一张」= 用这些牌**当作别的牌使用**
+   *      （如把一张牌当【杀】打出）时，额外摸一张。
+   *      折桠的【剪辑高手】也属于这种「转化」。
+   *
+   * 实现方式：
+   *   在牌使用前记录全场快照，结算后比对；
+   *   摸到的牌打上 'suodi' 标记 → 不计入手牌上限、无距离限制。
+   */
+  tongbusuodigongji: {
+    id: 'tongbusuodigongji', name: '同步索敌攻击',
+    desc: '你使用的牌结算后，若有其他角色的体力或手牌数减少，你摸一张牌。'
+      + '以此法获得的牌不计入手牌上限，使用时不受距离限制；'
+      + '若将之转化为其他牌使用，你摸一张牌。',
+    type: 'trigger', trigger: 'cardUsedAfter',
+    scope: 'any',
+    filter: (ctx) => {
+      const { player, game, event } = ctx;
+      if (!event || event.player !== player) return false;
+      const snap = event._snapBefore;
+      if (!snap) return false;
+      return game.anyOtherSuffered(player, snap);
+    },
+    async content(ctx) {
+      const { player, game } = ctx;
+      const cards = await player.draw(1);
+      // 打标：不计入手牌上限 + 使用时不受距离限制
+      for (const c of cards || []) {
+        c.gaintag = c.gaintag || [];
+        if (!c.gaintag.includes('suodi')) c.gaintag.push('suodi');
+      }
+      game.log(`${player.name} 发动【同步索敌攻击】，摸一张牌`
+        + `（不计入手牌上限、使用无距离限制）`);
+      game.emit();
+    },
+    mod: {
+      /** 以【同步索敌攻击】获得的牌使用时不受距离限制 */
+      trickNoDistance: (player, game) => {
+        if (!game) return false;
+        return (player.hand || []).some((c) => (c.gaintag || []).includes('suodi'));
+      },
+    },
+  },
 };
 
 /** 取某角色【木牛流马】下的牌 */

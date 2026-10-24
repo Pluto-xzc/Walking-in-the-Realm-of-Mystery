@@ -21,7 +21,60 @@ export const GROUPS = {
   shu: { key: 'shu', label: '蜀', color: '#b03a3a' },
   wu: { key: 'wu', label: '吴', color: '#3d8b6e' },
   qun: { key: 'qun', label: '群', color: '#7a6a55' },
+  /**
+   * 舟（= 再探泰拉）
+   * ------------------------------------------------------------------
+   * ⚠️「舟」是「再探泰拉」的**简称**，二者是同一个东西：
+   *   本扩武将都属于这个包，势力显示为「舟」。
+   *   因此选将页面只显示一个标签「再探泰拉」，
+   *   不会再单独列出「舟」，避免两个内容相同的标签并排。
+   */
+  zhou: { key: 'zhou', label: '舟', color: '#3f7f9e' },
 };
+
+/**
+ * 武将分类（选将页面的标签）
+ * ------------------------------------------------------------------
+ * 标准包武将不写 pack 字段（归入标准包，不单独出标签）。
+ * 本扩武将写 pack: 'zaitan'，在选将页显示为「再探泰拉」。
+ */
+export const PACKS = {
+  standard: { key: 'standard', label: '标准', color: '#8a7d6b' },
+  zaitan: {
+    key: 'zaitan',
+    label: '再探泰拉',
+    color: '#3f7f9e',
+    // 该分类对应的势力（同一个东西，只是叫法不同）
+    group: 'zhou',
+  },
+};
+
+/**
+ * 生成选将页面的标签列表
+ * ------------------------------------------------------------------
+ * 规则：若某个「分类」与某个「势力」指的是同一个东西，
+ * 只保留分类那一个标签，避免重复。
+ */
+export function pickerTabs() {
+  const tabs = [];
+  const packs = Object.values(PACKS).filter((p) => p.key !== 'standard');
+  packs.forEach((p) => tabs.push({
+    key: `pack:${p.key}`, label: p.label, color: p.color,
+  }));
+  // 已被分类覆盖的势力不再重复出现（如「舟」被「再探泰拉」覆盖）
+  const covered = new Set(packs.map((p) => p.group).filter(Boolean));
+  Object.values(GROUPS).forEach((g) => {
+    if (covered.has(g.key)) return;
+    tabs.push({ key: `group:${g.key}`, label: g.label, color: g.color });
+  });
+  return tabs;
+}
+
+/** 取武将所属分类（未标注则算标准包） */
+export function packOf(charId) {
+  const c = CHARACTERS[charId];
+  return (c && c.pack) || 'standard';
+}
 
 export const CHARACTERS = {
   /* ============================== 魏 (7) ============================== */
@@ -164,6 +217,52 @@ export const CHARACTERS = {
     sex: 'male', group: 'qun', hp: 5,
     skills: ['shizhan'],
   },
+
+  /* ========================= 再探泰拉 (2) ========================= */
+  /**
+   * 折桠 3/3 0 护甲，势力「舟」，分类「再探泰拉」。
+   *
+   * 技能：
+   *   无我入春时 —— 每回合限一次。有角色受到伤害时，若该次伤害会
+   *     确切减小其体力（伤害值 > 当前护甲），你可以流失 1 点体力并
+   *     防止之；若因此濒死，则回复体力至 1，之后「本回合未使用过牌
+   *     但成为过牌目标的其他角色」以及你自己，各获得 1 点护甲。
+   *
+   *   星火尽染寒 —— 出牌阶段开始时，可摸 X 张（X = 已损体力 + 2），
+   *     这些牌使用时无距离、无次数限制；但本回合你使用的**所有牌**
+   *     只能指定「手牌数不小于你」或「体力值不小于你」的角色。
+   *
+   * 立绘：需放置到 noname/character/zheya.png
+   *       （仓库 images/character/折桠.png 即此图，可压缩后上传）
+   */
+  zheya: {
+    id: 'zheya', name: '折桠', title: '无我入春时',
+    sex: 'female', group: 'zhou', hp: 3,
+    pack: 'zaitan',
+    skills: ['wuworuchunshi', 'xinghuojinranhan'],
+  },
+
+  /**
+   * 卡达 4/4、0 护甲，势力「舟」，分类「再探泰拉」。
+   *
+   * 技能：
+   *   剪辑高手 —— 每种颜色每回合各限一次。每回合结束时，可将一张手牌
+   *     置入弃牌堆，视为使用中央区的一张牌；若二者类型相同，可重复此流程；
+   *     若花色相同，摸一张牌。（该操作视为「用 A 转化为 B 使用」，
+   *     因此能触发【同步索敌攻击】）
+   *
+   *   同步索敌攻击 —— 你使用的牌结算后，若有其他角色体力或手牌数减少，
+   *     你摸一张牌；以此技能获得的牌不计入手牌上限、使用时不受距离限制，
+   *     若将之转化（当作其他牌）使用，再摸一张。
+   *
+   * 立绘：仓库 images/character/卡达.png（无需另传）
+   */
+  kada: {
+    id: 'kada', name: '卡达', title: '剪辑高手',
+    sex: 'female', group: 'zhou', hp: 4,
+    pack: 'zaitan',
+    skills: ['jianjigaoshou', 'tongbusuodigongji'],
+  },
 };
 
 /** 常备主公（身份模式中主公候选） */
@@ -183,4 +282,7 @@ export const CHAR_STATS = {
   }, {}),
 };
 
-export default { CHARACTERS, GROUPS, LORD_CHARS, ALL_CHARS, CHAR_STATS };
+export default {
+  CHARACTERS, GROUPS, PACKS, packOf, pickerTabs,
+  LORD_CHARS, ALL_CHARS, CHAR_STATS,
+};

@@ -27,6 +27,31 @@ export const IDENTITY_COLOR = {
   nei: '#6b4fa8',
 };
 
+/* ============================================================
+ * 候选武将数量（官方身份模式规则）
+ * ============================================================
+ * 官方流程是「先定身份，再按身份给不同数量的候选武将」：
+ *   主公 10 人（含常备主公）、忠臣 6 人、内奸 6 人、反贼 5 人。
+ *
+ * ⚠️ 说明：无名杀源码里的**默认值**其实是
+ *     choice_zhu=3 / choice_zhong=4 / choice_nei=6 / choice_fan=3
+ *   （见 noname/library/index.js 的 config 定义），
+ *   且主公是「常备主公全部 + choice_zhu 个随机」。
+ *   本项目按需求方指定的数值实现（10/6/6/5），
+ *   与无名杀默认值不同，特此注明，避免以后误以为抄错。
+ */
+export const CHOICE_NUM = {
+  zhu: 10,
+  zhong: 6,
+  nei: 6,
+  fan: 5,
+};
+
+/** 身份是否为主公（需要从常备主公里选） */
+export function isLordIdentity(identity) {
+  return identity === 'zhu';
+}
+
 function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -34,6 +59,51 @@ function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+/**
+ * 按「官方身份模式」规则生成候选武将池
+ * ------------------------------------------------------------------
+ * 官方流程：**先分发身份**，再根据身份给出候选武将：
+ *   - 主公 → 从**常备主公**里选（本项目按需求取 CHOICE_NUM.zhu 个候选）
+ *   - 忠臣/内奸/反贼 → 从对应数量的普通武将里随机抽
+ *
+ * @param {string} identity  'zhu' | 'zhong' | 'nei' | 'fan'
+ * @param {object} [opts]
+ * @param {string[]} [opts.exclude] 需要排除的武将（如已被他人选走）
+ * @returns {string[]} 候选武将 id 列表
+ */
+export function buildCandidatePool(identity, opts = {}) {
+  const exclude = new Set(opts.exclude || []);
+  const num = CHOICE_NUM[identity] || 5;
+
+  if (identity === 'zhu') {
+    // 主公：常备主公优先（这是官方规则的核心——主公必须是常备主公）
+    const lords = LORD_CHARS.filter((c) => !exclude.has(c));
+    if (lords.length >= 1) {
+      // 常备主公不足 num 个时，用普通武将补足，保证候选数量稳定
+      const extra = shuffle(ALL_CHARS.filter(
+        (c) => !exclude.has(c) && !LORD_CHARS.includes(c),
+      ));
+      return shuffle(lords).concat(extra).slice(0, num);
+    }
+  }
+  // 其他身份：从全部武将随机抽 num 个
+  return shuffle(ALL_CHARS.filter((c) => !exclude.has(c))).slice(0, num);
+}
+
+/**
+ * 生成一局的身份配置
+ * ------------------------------------------------------------------
+ * 5 人局固定为 主1 / 忠1 / 反2 / 内1，但**玩家拿到哪个身份是随机的**。
+ * @param {number} count 人数
+ * @returns {string[]} 每个座位的身份（下标即座位，0 号位固定主公）
+ */
+export function dealIdentities(count = 5) {
+  const base = IDENTITY_5.slice(0, count);
+  // 除主公外的身份打乱后分配给 2~5 号位
+  const others = base.filter((x) => x !== 'zhu');
+  return ['zhu', ...shuffle(others)];
 }
 
 /**
@@ -119,4 +189,13 @@ export async function startMatch(game, io) {
   return game;
 }
 
-export default { createMatch, startMatch, IDENTITY_5, IDENTITY_LABEL, IDENTITY_COLOR };
+export default {
+  createMatch,
+  startMatch,
+  buildCandidatePool,
+  dealIdentities,
+  IDENTITY_5,
+  IDENTITY_LABEL,
+  IDENTITY_COLOR,
+  CHOICE_NUM,
+};
