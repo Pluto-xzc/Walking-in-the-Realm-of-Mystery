@@ -50,6 +50,9 @@ const EQUIP_SLOT_MAP_SHORT = {
   equip1: '武器', equip2: '防具', equip5: '宝物', equip4: '进攻马', equip3: '防御马',
 };
 
+/** 身份中文名（日志用，避免循环依赖 match.js） */
+const IDENTITY_NAME = { zhu: '主公', zhong: '忠臣', fan: '反贼', nei: '内奸' };
+
 let uid = 0;
 const nextId = () => ++uid;
 
@@ -181,6 +184,12 @@ export class Player {
     this.identityShown = false;
     this.isZhu = false;
     this.extraTurn = false;
+    /**
+     * 横置状态（铁索连环）
+     * true = 处于「横置」（连环状态）。
+     * 受到属性伤害时，本次伤害会传导给其他横置角色，随后一并重置。
+     */
+    this.isChained = false;
   }
 
   /** 判断某个装备槽位是否已被废除 */
@@ -298,15 +307,26 @@ export class Player {
   }
 
   async loseCards(cards, zone) {
-    for (const c of cards) {
+    for (const c of (cards || [])) {
+      // 防御：跳过空项（调用方可能传入未找到的牌）
+      if (!c) continue;
       const hi = this.hand.indexOf(c);
       if (hi >= 0) { this.hand.splice(hi, 1); c.zone = 'discard'; continue; }
-      for (const k of ['equip1', 'equip2', 'equip3', 'equip4']) {
-        if (this.equips[k] === c) {
-          this.equips[k] = null; c.zone = 'discard';
-          await this.game.checkSkills('equipLost', { player: this, card: c });
-          continue;
+      // 遍历全部槽位（含宝物 equip5），触发「失去装备」时机
+      let lostEquip = false;
+      for (const slot of EQUIP_SLOTS) {
+        if (this.equips[slot.key] === c) {
+          this.equips[slot.key] = null;
+          c.zone = 'discard';
+          lostEquip = true;
+          break;
         }
+      }
+      if (lostEquip) {
+        await this.game.checkSkills('equipLost', { player: this, card: c });
+        // 白银狮子：失去时回复 1 点体力
+        await this.game.checkBaiyinLose(this, c);
+        continue;
       }
       const ji = this.judges.indexOf(c);
       if (ji >= 0) { this.judges.splice(ji, 1); c.zone = 'discard'; }
@@ -972,6 +992,29 @@ export class Game {
     return this.playerHasEquipSkill(player, 'zhuge_skill');
   }
 
+  /**
+   * 是否可以将普通【杀】当火【杀】使用（朱雀羽扇）
+   * 检查武将技能与装备技能里的 canUseAsFireSha 标记。
+   */
+  canUseAsFireSha(player) {
+    // 装备技能
+    for (const c of Object.values(player.equips).filter(Boolean)) {
+      const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
+      const sk = esid && SKILLS[esid];
+      if (sk && sk.mod && sk.mod.canUseAsFireSha && sk.mod.canUseAsFireSha(player)) {
+        return true;
+      }
+    }
+    // 武将技能
+    for (const sid of player.skills) {
+      const sk = SKILLS[sid];
+      if (sk && sk.mod && sk.mod.canUseAsFireSha && sk.mod.canUseAsFireSha(player)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** 使用锦囊是否无视距离限制（奇才） */
   trickNoDistance(player) {
     return player.hasSkill('qicai');
@@ -1050,13 +1093,17 @@ export class Game {
   }
 
   /* ---------------- 伤害 ---------------- */
-  async doDamage(target, num, source, skill, card) {
+  async doDamage(target, num, source, skill, card, nature = null) {
     if (!target.alive || this.over) return;
+
+    // 属性来源：显式传入 > 牌的属性 > 无
+    const dmgNature = nature || (card && card.nature) || null;
 
     const ev = {
       player: target, source, num: Math.max(0, num), skill, card,
-      cards: card ? [card] : [], nature: (card && card.nature) || null,
+      cards: card ? [card] : [], nature: dmgNature,
       prevented: false,
+      baseNum: Math.max(0, num),   // 未经任何修改的原始伤害
     };
 
     // 免疫检查
@@ -1068,41 +1115,269 @@ export class Game {
       }
     }
 
-    // 藤甲：火焰伤害 +1
-    for (const c of Object.values(target.equips).filter(Boolean)) {
-      const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
-      const sk = esid && SKILLS[esid];
-      if (sk && sk.mod && sk.mod.damageTaken && card) {
-        ev.num = sk.mod.damageTaken(ev.num, card);
-      }
-    }
-    // 华雄恃勇等
-    if (source) {
-      for (const sid of source.skills) {
-        const sk = SKILLS[sid];
-        if (sk && sk.mod && sk.mod.damageFromSha && card && card.name === 'sha') {
-          ev.num = sk.mod.damageFromSha(ev.num, card);
-        }
-      }
-    }
-    // 裸衣
-    if (source && source.hasFlag('luoyi') === this.turnCount && card
-      && (card.name === 'sha' || card.name === 'juedou')) {
-      ev.num += 1;
-    }
+    /* ============================================================
+     * 伤害数值修改 —— 三级优先级
+     * ============================================================
+     * 顺序**不可调换**，否则结果会错。设计意图：
+     *
+     *   第一级 damageModify —— 增减伤
+     *     最基础的加减，如藤甲火焰+1、酒+1、古锭刀+1、裸衣+1。
+     *     未来武将的「伤害+1 / 伤害-1」也属于这一级。
+     *
+     *   第二级 finalDamageModify —— 最终伤害修改
+     *     在所有增减伤算完之后，对「最终结果」做整体改写。
+     *     如「此伤害改为 2」「伤害翻倍」这类效果。
+     *
+     *   第三级 finalDamage —— 特殊裁定（白银狮子）
+     *     **永远最后执行**，看到的是经过前两级修改后的最终数字，
+     *     再自己判断要不要动手（如「大于 1 则减为 1」）。
+     *
+     * 为什么要这样分：白银狮子的规则是「无论对方怎么增伤减伤，
+     * 最后到我这儿的伤害如果超过 1，就只受 1」。如果它先于增减伤
+     * 执行，后面再被加上去就失去意义了。
+     * ============================================================ */
 
+    // ---------- 第一级：增减伤 ----------
+    await this.applyDamageModify(ev);
+
+    // damageBegin 时机（技能可在此 prevent 或继续改数值）
     await this.checkSkills('damageBegin', ev);
     if (ev.prevented) { this.emit(); return; }
     ev.num = Math.max(0, ev.num);
     if (ev.num === 0) { this.emit(); return; }
 
+    // ---------- 第二级：最终伤害修改 ----------
+    await this.applyFinalDamageModify(ev);
+    ev.num = Math.max(0, ev.num);
+    if (ev.num === 0) { this.emit(); return; }
+
+    // ---------- 第三级：特殊裁定（白银狮子等），永远最后 ----------
+    await this.applyFinalDamage(ev);
+    ev.num = Math.max(0, ev.num);
+    if (ev.num === 0) { this.emit(); return; }
+
+    // 铁索连环：记录本次属性伤害，随后传导给其他横置角色
+    const chainTargets = [];
+    if (dmgNature && target.isChained) {
+      target.isChained = false;      // 传导后重置
+      for (const p of this.players) {
+        if (p !== target && p.alive && p.isChained) chainTargets.push(p);
+      }
+    }
+
     target.hp -= ev.num;
-    this.log(`${target.name} 受到 ${ev.num} 点${ev.nature === 'fire' ? '火焰' : ev.nature === 'thunder' ? '雷电' : ''}伤害（${target.hp}/${target.maxHp}）${source ? `，来源：${source.name}` : ''}`);
+    const natureText = dmgNature === 'fire' ? '火焰' : dmgNature === 'thunder' ? '雷电' : '';
+    this.log(`${target.name} 受到 ${ev.num} 点${natureText}伤害（${target.hp}/${target.maxHp}）${source ? `，来源：${source.name}` : ''}`);
     this.emit();
 
     await this.checkSkills('damageEnd', ev);
 
     if (target.hp <= 0) await this.enterDying(target, source);
+
+    // 铁索连环：把本次属性伤害传导给其他横置角色
+    // 注意：传导产生的伤害本身也是同属性，会继续链式传导（由递归自然完成）
+    if (chainTargets.length) {
+      const forwarded = chainTargets.slice();
+      this.log(`${target.name} 受到属性伤害，铁索连环传导至 `
+        + forwarded.map((p) => p.name).join('、'));
+      for (const p of forwarded) {
+        if (!p.alive) continue;
+        await this.doDamage(p, ev.num, source, 'tiesuo', null, dmgNature);
+      }
+    }
+  }
+
+  /* ============================================================
+   * 伤害数值修改的三级管线
+   * ============================================================
+   * 三个方法按固定顺序被 doDamage 调用：
+   *   applyDamageModify      → 第一级：增减伤
+   *   applyFinalDamageModify → 第二级：最终伤害修改
+   *   applyFinalDamage       → 第三级：特殊裁定（白银狮子）
+   *
+   * 每个方法都会遍历：
+   *   ① 受伤者身上的装备技能
+   *   ② 受伤者自己的武将技能
+   *   ③ 伤害来源的武将技能
+   *   ④ 全场其他角色的技能（少用，如光环类）
+   * ============================================================ */
+
+  /**
+   * 收集所有与伤害相关的技能来源（装备技 + 武将技）
+   * @returns {{skill: object, owner: Player}[]}
+   */
+  collectDamageSkills(target, source) {
+    const out = [];
+    const push = (owner, sk) => {
+      if (sk && sk.mod) out.push({ skill: sk, owner });
+    };
+    // 受伤者的装备技能
+    if (target) {
+      for (const c of Object.values(target.equips).filter(Boolean)) {
+        const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
+        if (esid) push(target, SKILLS[esid]);
+      }
+    }
+    // 受伤者的武将技能
+    if (target) {
+      for (const sid of target.skills) push(target, SKILLS[sid]);
+    }
+    // 伤害来源的技能
+    if (source && source !== target) {
+      for (const c of Object.values(source.equips).filter(Boolean)) {
+        const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
+        if (esid) push(source, SKILLS[esid]);
+      }
+      for (const sid of source.skills) push(source, SKILLS[sid]);
+    }
+    // 全场其他角色（光环类增减伤）
+    for (const p of this.players) {
+      if (p === target || p === source || !p.alive) continue;
+      for (const sid of p.skills) {
+        const sk = SKILLS[sid];
+        if (sk && sk.mod && (sk.mod.damageModify || sk.mod.finalDamage
+          || sk.mod.finalDamageModify)) {
+          push(p, sk);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 第一级：增减伤
+   * 处理 mod.damageModify(num, ev, owner)
+   * 也兼容旧的 mod.damageTaken / damageFromSha 写法
+   */
+  async applyDamageModify(ev) {
+    const target = ev.player;
+    const source = ev.source;
+
+    for (const { skill, owner } of this.collectDamageSkills(target, source)) {
+      const mod = skill.mod;
+
+      // 新写法（推荐）
+      if (typeof mod.damageModify === 'function') {
+        try {
+          const r = mod.damageModify(ev.num, ev, owner);
+          if (typeof r === 'number') {
+            if (r !== ev.num) {
+              this.log(`【${skill.name}】使伤害 ${ev.num} → ${r}`);
+            }
+            ev.num = r;
+          }
+        } catch (e) { this._warnMod(skill, e); }
+      }
+
+      // 兼容旧写法：受伤者装备的 damageTaken
+      if (owner === target && typeof mod.damageTaken === 'function') {
+        try {
+          const r = mod.damageTaken(ev.num, ev.card, ev.nature);
+          if (typeof r === 'number' && r !== ev.num) {
+            this.log(`【${skill.name}】使伤害 ${ev.num} → ${r}`);
+            ev.num = r;
+          }
+        } catch (e) { this._warnMod(skill, e); }
+      }
+
+      // 兼容旧写法：来源的 damageFromSha
+      if (owner === source && typeof mod.damageFromSha === 'function'
+        && ev.card && ev.card.name === 'sha') {
+        try {
+          const r = mod.damageFromSha(ev.num, ev.card, target);
+          if (typeof r === 'number' && r !== ev.num) {
+            this.log(`【${skill.name}】使伤害 ${ev.num} → ${r}`);
+            ev.num = r;
+          }
+        } catch (e) { this._warnMod(skill, e); }
+      }
+    }
+
+    // 裸衣（旧式 flag，保留兼容）
+    if (source && source.hasFlag('luoyi') === this.turnCount && ev.card
+      && (ev.card.name === 'sha' || ev.card.name === 'juedou')) {
+      ev.num += 1;
+      this.log(`${source.name} 的【裸衣】使伤害 +1`);
+    }
+
+    // 【酒】：本回合下一张【杀】伤害 +1（用掉即清除）
+    if (source && ev.card && ev.card.name === 'sha' && (source.storage.jiu || 0) > 0) {
+      ev.num += source.storage.jiu;
+      this.log(`${source.name} 的【酒】生效，伤害 +${source.storage.jiu}`);
+      source.storage.jiu = 0;
+    }
+  }
+
+  /**
+   * 第二级：最终伤害修改
+   * 处理 mod.finalDamageModify(num, ev, owner)
+   * 用于「把伤害整体改为 X」这类效果
+   */
+  async applyFinalDamageModify(ev) {
+    for (const { skill, owner } of this.collectDamageSkills(ev.player, ev.source)) {
+      const mod = skill.mod;
+      if (typeof mod.finalDamageModify !== 'function') continue;
+      try {
+        const r = mod.finalDamageModify(ev.num, ev, owner);
+        if (typeof r === 'number' && r !== ev.num) {
+          this.log(`【${skill.name}】（最终修改）使伤害 ${ev.num} → ${r}`);
+          ev.num = r;
+        }
+      } catch (e) { this._warnMod(skill, e); }
+    }
+  }
+
+  /**
+   * 第三级：特殊裁定
+   * ------------------------------------------------------------------
+   * 处理 mod.finalDamage(num, ev, owner) —— 永远最后执行。
+   *
+   * 白银狮子属于这一类：它不参与增减伤的计算，而是在所有修改
+   * 尘埃落定之后，判断「最终伤害是否 > 1」，是则减为 1。
+   *
+   * 这样设计的原因：无论对方用什么手段增伤（酒、藤甲、古锭刀、
+   * 未来武将的增伤技），只要最终落到白银狮子身上，都会被压到 1。
+   */
+  async applyFinalDamage(ev) {
+    for (const { skill, owner } of this.collectDamageSkills(ev.player, ev.source)) {
+      const mod = skill.mod;
+      if (typeof mod.finalDamage !== 'function') continue;
+      try {
+        const before = ev.num;
+        const r = mod.finalDamage(ev.num, ev, owner);
+        if (typeof r === 'number' && r !== before) {
+          this.log(`【${skill.name}】（特殊裁定）使伤害 ${before} → ${r}`);
+          ev.num = r;
+        }
+      } catch (e) { this._warnMod(skill, e); }
+    }
+  }
+
+  /** 技能 mod 抛错时的提示（开发期可见，避免静默失效） */
+  _warnMod(skill, err) {
+    const msg = `技能【${skill && skill.name}】的伤害修改出错：${err && err.message}`;
+    this.log(msg);
+    if (typeof console !== 'undefined' && console.warn) console.warn(msg, err);
+  }
+
+  /**
+   * 白银狮子的「失去时回复 1 点体力」
+   * ------------------------------------------------------------------
+   * 在装备离开装备区时调用。
+   * 注意：必须检查牌名而非槽位，因为白银狮子可能从任何槽位被移走。
+   */
+  async checkBaiyinLose(player, card) {
+    if (!card || card.name !== 'baiyin') return;
+    const def = CARDS.baiyin;
+    if (!def || def.equipSkill !== 'baiyin_skill') return;
+    if (!player.alive) return;
+    if (player.hp >= player.maxHp) {
+      this.log(`${player.name} 失去【白银狮子】，但体力已满`);
+      return;
+    }
+    player.hp += 1;
+    this.log(`${player.name} 失去【白银狮子】，回复 1 点体力（${player.hp}/${player.maxHp}）`);
+    this.emit();
   }
 
   isImmune(player, card) {
@@ -1176,7 +1451,10 @@ export class Game {
   async killPlayer(player, source) {
     player.alive = false;
     player.hp = 0;
-    this.log(`${player.name} 阵亡`);
+    // 阵亡时公开真实身份（身份模式下死者身份必须亮明）
+    const wasHidden = !player.identityShown;
+    player.identityShown = true;
+    this.log(`${player.name} 阵亡${wasHidden ? `，身份为【${IDENTITY_NAME[player.identity] || player.identity}】` : ''}`);
     // 弃置所有牌
     const all = player.getCards('hej');
     for (const c of all) c.zone = 'discard';
@@ -1382,6 +1660,14 @@ export class Game {
           this.log(`${player.name} 被【乐不思蜀】影响，跳过出牌阶段`);
         }
         this.toDiscard(card); card.zone = 'discard';
+      } else if (card.name === 'bingliang') {
+        // 兵粮寸断：判定不为梅花则跳过摸牌阶段
+        const j = await player.judge('bingliang');
+        if (j.suit !== 'club') {
+          player.addFlag('skipDraw', true);
+          this.log(`${player.name} 被【兵粮寸断】影响，跳过摸牌阶段`);
+        }
+        this.toDiscard(card); card.zone = 'discard';
       } else if (card.name === 'shandian') {
         const j = await player.judge('shandian');
         const spade29 = j.suit === 'spade' && j.number >= 2 && j.number <= 9;
@@ -1408,6 +1694,12 @@ export class Game {
   }
 
   async phaseDraw(player) {
+    // 兵粮寸断：判定失败会设置 skipDraw 标记
+    if (player.hasFlag('skipDraw')) {
+      this.log(`${player.name} 跳过摸牌阶段`);
+      this.emit();
+      return;
+    }
     let num = 2;
     const ev = { player, num, drawDelta: 0, skipDraw: false };
     await this.checkSkills('drawPhaseBefore', ev);
@@ -1490,6 +1782,19 @@ export class Game {
       }
     }
 
+    // ⑤ 朱雀羽扇：可将普通【杀】当火【杀】使用
+    //    由调用方通过 card.useFire = true 表明意图（UI 询问 / AI 决策）。
+    //    这里补全属性，使后续伤害结算按火焰处理。
+    if (card.name === 'sha' && !card.nature && this.canUseAsFireSha(player)) {
+      const wantFire = card.useFire === true
+        || (card.useFire === undefined && this.ai && this.ai.wantFireSha
+          && this.ai.wantFireSha(player, targets));
+      if (wantFire) {
+        card.nature = 'fire';
+        this.log(`${player.name} 发动【朱雀羽扇】，此【杀】视为火【杀】`);
+      }
+    }
+
     this.log(`${player.name} 使用【${card.fullname}】${card.sourceCards && card.sourceCards.length ? `（${card.sourceCards.map((c) => c.text).join('、')}）` : ''}`);
 
     // ============================================================
@@ -1561,10 +1866,14 @@ export class Game {
       case 'nanman': await this.resolveAoe(player, card, 'sha'); break;
       case 'wanjian': await this.resolveAoe(player, card, 'shan'); break;
       case 'jiedao': await this.resolveJiedao(player, targets); break;
-      case 'lebu': case 'shandian':
+      case 'lebu': case 'shandian': case 'bingliang':
         if (targets && targets.length) await this.addJudgeCard(targets[0], card);
         else await this.addJudgeCard(player, card);
         return;
+      /* ---------- 风林火山 ---------- */
+      case 'jiu': await this.resolveJiu(player); return;
+      case 'huogong': await this.resolveHuogong(player, targets); break;
+      case 'tiesuo': await this.resolveTiesuo(player, targets); break;
       default:
         if (def.type === 'equip') { await this.equipCard(player, card); return; }
         break;
@@ -1724,7 +2033,7 @@ export class Game {
       }
 
       if (dodged) {
-        this.log(`${realTarget.name} 使用【闪】抵消了【杀】`);
+        this.log(`${realTarget.name} 打出【闪】抵消了【杀】`);
         await this.checkSkills('shaDodged', { player, card, target: realTarget, source: player, forceHit: false });
         if (!realTarget) continue;
         this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
@@ -1759,7 +2068,7 @@ export class Game {
       if (wantBagua) {
         const j = await target.judge('bagua');
         if (j.color === 'red') {
-          this.log(`${target.name} 触发【八卦阵】，判定为红色，视为使用【闪】`);
+          this.log(`${target.name} 触发【八卦阵】，判定为红色，视为打出【闪】`);
           return true;
         }
       }
@@ -2013,6 +2322,105 @@ export class Game {
     }
   }
 
+  /* ============================================================
+   * 风林火山牌结算
+   * ============================================================ */
+
+  /**
+   * 【酒】
+   * 参考无名杀 card/extra.js 的 jiu：
+   *   - 濒死时使用 → 回复 1 点体力（等同【桃】对自己）
+   *   - 平时使用   → 本回合计入「酒意」，下一张【杀】伤害 +1
+   *   - 每回合限一次（濒死时的使用不计入该限制）
+   */
+  async resolveJiu(player) {
+    if (player.hp <= 0) {
+      player.hp += 1;
+      this.log(`${player.name} 使用【酒】回复 1 点体力`);
+      this.emit();
+      return;
+    }
+    player.storage.jiu = (player.storage.jiu || 0) + 1;
+    player.addFlag('jiuUsed', (player.flags.jiuUsed || 0) + 1);
+    this.log(`${player.name} 使用【酒】，本回合下一张【杀】伤害 +1`);
+    this.emit();
+  }
+
+  /**
+   * 【火攻】
+   * 参考无名杀 card/extra.js 的 huogong：
+   *   ① 目标展示一张手牌（**展示**，不是明置）
+   *   ② 你可以弃置一张与其花色相同的手牌
+   *   ③ 若弃置 → 对其造成 1 点火焰伤害
+   */
+  async resolveHuogong(player, targets) {
+    const target = targets && targets[0];
+    if (!target || !target.alive) return;
+    if (!target.countCards('h')) {
+      this.log(`${target.name} 没有手牌，【火攻】无效`);
+      return;
+    }
+
+    // ① 目标展示一张手牌（瞬时公开）
+    let shown;
+    if (target.isHuman) {
+      const picked = await this.io.chooseCards(target, {
+        prompt: '【火攻】：请展示一张手牌',
+        position: 'h', min: 1, max: 1, cancelable: false,
+      });
+      shown = (picked && picked[0]) || target.getCards('h')[0];
+    } else {
+      // AI：展示价值最低的那张
+      const hs = target.getCards('h');
+      shown = this.ai.pickBestCard(hs, true) || hs[0];
+    }
+    await this.showCards([shown], target, 1200);
+
+    // ② 使用者可弃一张同花色手牌
+    const sameSuit = player.getCards('h', (c) => c.suit === shown.suit);
+    if (!sameSuit.length) {
+      this.log(`${player.name} 没有与展示牌同花色的手牌，【火攻】未造成伤害`);
+      return;
+    }
+
+    let discard;
+    if (player.isHuman) {
+      const picked = await this.io.chooseCards(player, {
+        prompt: `【火攻】：可弃置一张${SUITS[shown.suit].name}手牌造成 1 点火焰伤害`,
+        position: 'h', min: 1, max: 1,
+        filter: (c) => c.suit === shown.suit,
+        cancelable: true,
+      });
+      discard = (picked && picked[0]) || null;
+    } else {
+      discard = this.ai.shouldHuogongDiscard(player, target) ? sameSuit[0] : null;
+    }
+
+    if (!discard) {
+      this.log(`${player.name} 放弃弃牌，【火攻】未造成伤害`);
+      return;
+    }
+    await player.discardCards([discard]);
+    this.log(`${player.name} 弃置 ${discard.text}，对 ${target.name} 造成火焰伤害`);
+    await target.damage(1, player, 'huogong', null, 'fire');
+  }
+
+  /**
+   * 【铁索连环】
+   * 参考无名杀 card/extra.js 的 tiesuo：
+   *   横置或重置 1~2 名角色（不造成伤害，只是改变「横置」状态）
+   *   属性伤害结算时会连带传导（见 doDamage）
+   */
+  async resolveTiesuo(player, targets) {
+    const list = (targets && targets.length) ? targets : [player];
+    for (const t of list) {
+      if (!t || !t.alive) continue;
+      t.isChained = !t.isChained;
+      this.log(`${t.name} ${t.isChained ? '横置' : '重置'}（铁索连环）`);
+    }
+    this.emit();
+  }
+
   async resolveJiedao(player, targets) {
     const [holder, victim] = targets;
     if (!holder || !victim) return;
@@ -2045,11 +2453,38 @@ export class Game {
       }
     }
     if (!has) {
-      // 交出武器
-      await player.gain([weapon], 'gain2');
-      await this.equipCard2(player, weapon);
-      this.log(`${holder.name} 未出【杀】，武器交给 ${player.name}`);
+      // 交出武器 —— 按无名杀规则：武器进入**使用者的手牌**，
+      // 不会自动装备（原实现误用了 equipCard2，导致直接被装到自己身上）。
+      // 参考 noname card/standard.js jiedao: player.gain(cards, target, ...)
+      await this.transferEquipToHand(player, weapon, holder);
+      this.log(`${holder.name} 未出【杀】，【${weapon.fullname}】交给 ${player.name}`);
     }
+  }
+
+  /**
+   * 把某角色装备区的牌移到另一名角色的手牌
+   * 用于【借刀杀人】等「交出装备」类效果。
+   */
+  async transferEquipToHand(receiver, card, from) {
+    // 先从原持有者装备区摘除
+    for (const p of this.players) {
+      for (const k of Object.keys(p.equips)) {
+        if (p.equips[k] === card) p.equips[k] = null;
+      }
+      const ji = p.judges.indexOf(card);
+      if (ji >= 0) p.judges.splice(ji, 1);
+      const hi = p.hand.indexOf(card);
+      if (hi >= 0) p.hand.splice(hi, 1);
+    }
+    this._removeFromPiles(card);
+    // 进入接收者手牌
+    card.zone = ZONE.HAND;
+    card.owner = receiver;
+    card.checkRevealLost(receiver);
+    receiver.hand.push(card);
+    // 更新装备者的武器相关状态（攻击范围会随之失效）
+    if (from) from.equips.equip1 = null;
+    this.emit();
   }
 
   async equipCard2(player, card) {

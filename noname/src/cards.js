@@ -456,6 +456,125 @@ export const CARDS = {
     desc: '攻击范围 2。你使用【杀】造成伤害时，可以防止此伤害，改为弃置目标两张牌。',
     tip: '攻击范围 2，可改为弃置目标两张牌',
   },
+
+  /* ==================================================================
+   * 风林火山（神话再临）新增牌
+   * ------------------------------------------------------------------
+   * 规则与数值对齐无名杀 card/extra.js，代码为本项目独立实现。
+   * 目前只加入游戏牌，武将留待后续。
+   * ================================================================== */
+
+  /* ---------------------------- 基本牌 ---------------------------- */
+  jiu: {
+    name: 'jiu',
+    type: 'basic',
+    subtype: 'buff',
+    label: '酒',
+    fullname: '酒',
+    selfOnly: true,
+    usable: 1,                  // 每回合限一次（非濒死时）
+    desc: '出牌阶段，对自己使用，令你本回合使用的下一张【杀】伤害 +1，'
+      + '每回合限一次。当你处于濒死状态时，对自己使用，回复 1 点体力。',
+    tip: '本回合下一张【杀】伤害 +1；濒死时当【桃】用',
+  },
+
+  /* ---------------------------- 锦囊牌 ---------------------------- */
+  huogong: {
+    name: 'huogong',
+    type: 'trick',
+    label: '火攻',
+    fullname: '火攻',
+    nature: 'fire',
+    selectTarget: 1,
+    notSelf: true,
+    desc: '出牌阶段，对一名有手牌的角色使用。其展示一张手牌，'
+      + '然后你可以弃置一张与其展示牌花色相同的手牌，对其造成 1 点火焰伤害。',
+    tip: '展示目标一张手牌，弃同花色牌造成火焰伤害',
+  },
+  tiesuo: {
+    name: 'tiesuo',
+    type: 'trick',
+    label: '铁索',
+    fullname: '铁索连环',
+    // 可以指定 1~2 名角色（含自己）
+    selectTarget: 2,
+    targetMin: 1,
+    targetMax: 2,
+    canSelf: true,
+    desc: '出牌阶段，横置或重置 1~2 名角色。'
+      + '处于横置状态的角色受到属性伤害时，其他横置角色也受到同来源同属性同点数的伤害，然后重置。',
+    tip: '横置/重置角色，连接属性伤害',
+  },
+  bingliang: {
+    name: 'bingliang',
+    type: 'trick',
+    label: '兵粮',
+    fullname: '兵粮寸断',
+    delayed: true,
+    selectTarget: 1,
+    notSelf: true,
+    distanceLimit: 1,
+    desc: '出牌阶段，对距离 1 内的一名其他角色使用。'
+      + '将其置于其判定区，判定阶段判定：若不为梅花，跳过其摸牌阶段。',
+    tip: '判定非梅花则跳过摸牌阶段',
+  },
+
+  /* ---------------------------- 装备牌 ---------------------------- */
+  zhuque: {
+    name: 'zhuque',
+    type: 'equip',
+    subtype: 'equip1',
+    label: '朱雀',
+    fullname: '朱雀羽扇',
+    attackRange: 4,
+    equipSkill: 'zhuque_skill',
+    desc: '攻击范围 4。你可以将一张普通【杀】当火【杀】使用或打出。',
+    tip: '攻击范围 4，可将普通【杀】当火【杀】',
+  },
+  guding: {
+    name: 'guding',
+    type: 'equip',
+    subtype: 'equip1',
+    label: '古锭',
+    fullname: '古锭刀',
+    attackRange: 2,
+    equipSkill: 'guding_skill',
+    desc: '攻击范围 2。你使用【杀】造成伤害时，若目标没有手牌，此伤害 +1。',
+    tip: '攻击范围 2，对无手牌目标伤害 +1',
+  },
+  baiyin: {
+    name: 'baiyin',
+    type: 'equip',
+    subtype: 'equip2',
+    label: '白银',
+    fullname: '白银狮子',
+    equipSkill: 'baiyin_skill',
+    desc: '锁定技。当你受到伤害时，若此伤害大于 1，防止多余伤害。'
+      + '当你失去装备区里的【白银狮子】时，回复 1 点体力。',
+    tip: '伤害超过 1 时只受 1 点；失去时回复 1 点',
+  },
+  hualiu: {
+    name: 'hualiu',
+    type: 'equip',
+    subtype: 'equip3',
+    label: '骅骝',
+    fullname: '骅骝',
+    distanceTo: 1,
+    desc: '其他角色计算与你的距离时 +1。',
+    tip: '他人到你的距离 +1',
+  },
+  muniu: {
+    name: 'muniu',
+    type: 'equip',
+    subtype: 'equip5',          // 宝物（第一个使用 equip5 槽位的牌）
+    label: '木牛',
+    fullname: '木牛流马',
+    equipSkill: 'muniu_skill',
+    desc: '出牌阶段限一次，你可以将一张手牌置于【木牛流马】下（称为「辎」）。'
+      + '你可以将【木牛流马】下的牌如手牌般使用或打出。'
+      + '当你失去装备区里的【木牛流马】时，将其下的牌置入弃牌堆。',
+    tip: '可存放手牌，并像手牌一样使用其中的牌',
+  },
 };
 
 /**
@@ -527,6 +646,35 @@ export const DECK_LIST = [
   ['spade', 11, 'wuxie'], ['club', 12, 'wuxie'], ['club', 13, 'wuxie'],
   ['spade', 6, 'lebu'], ['club', 6, 'lebu'], ['heart', 6, 'lebu'],
   ['spade', 1, 'shandian'], ['heart', 12, 'shandian'],
+
+  /* ==================================================================
+   * 风林火山（神话再临）牌堆
+   * ------------------------------------------------------------------
+   * 花色点数与无名杀 card/extra.js 完全一致（共 22 张）。
+   * ================================================================== */
+
+  // 基本牌：酒 ×5
+  ['spade', 3, 'jiu'], ['spade', 9, 'jiu'],
+  ['club', 3, 'jiu'], ['club', 9, 'jiu'],
+  ['diamond', 9, 'jiu'],
+
+  // 锦囊：火攻 ×3
+  ['heart', 2, 'huogong'], ['heart', 3, 'huogong'], ['diamond', 12, 'huogong'],
+
+  // 锦囊：铁索连环 ×6
+  ['spade', 11, 'tiesuo'], ['spade', 12, 'tiesuo'],
+  ['club', 10, 'tiesuo'], ['club', 11, 'tiesuo'],
+  ['club', 12, 'tiesuo'], ['club', 13, 'tiesuo'],
+
+  // 锦囊：兵粮寸断 ×2
+  ['spade', 10, 'bingliang'], ['club', 4, 'bingliang'],
+
+  // 装备：朱雀羽扇 / 古锭刀 / 白银狮子 / 骅骝 / 木牛流马
+  ['diamond', 1, 'zhuque'],
+  ['spade', 1, 'guding'],
+  ['club', 1, 'baiyin'],
+  ['diamond', 13, 'hualiu'],
+  ['diamond', 5, 'muniu'],     // 花色点数对齐无名杀（方块5）
 ];
 
 /** 统计信息（供开屏提示用） */

@@ -58,6 +58,11 @@ export function useValue(card, player, game, usedCount = 0) {
     case 'shandian': return 0;
     case 'lebu': return 3.5;
     case 'tao': return taoUseValue(card, player, game);
+    /* ---------- 风林火山 ---------- */
+    case 'jiu': return player.hp <= 1 ? 7.3 : 4;
+    case 'huogong': return 4;
+    case 'tiesuo': return 2.5;
+    case 'bingliang': return 3.5;
     default:
       if (CARDS[n] && CARDS[n].type === 'equip') return equipUseValue(card, player);
       return 2;
@@ -110,7 +115,19 @@ export const KEEP_VALUE = {
   lebu: 4, jiedao: 3, shandian: 1,
   sha: 4, shan: 6,
   equip: 3.5,
+  /* 风林火山 */
+  jiu: 6, huogong: 4.5, tiesuo: 3.5, bingliang: 4.5,
 };
+
+/**
+ * 【火攻】是否值得弃牌造成伤害
+ * 参考无名杀：只有伤害收益为正时才弃
+ */
+export function shouldHuogongDiscard(self, target) {
+  // 能造成击杀、或目标血量低时值得
+  if (target.hp <= 1) return true;
+  return target.hp <= 2;
+}
 
 /** 取一张牌的保留价值（用于弃牌与顺手牵羊选牌） */
 export function keepValue(card) {
@@ -139,6 +156,32 @@ export class AI {
   /** 这张牌的保留价值（弃牌时用） */
   cardValue(card) {
     return keepValue(card);
+  }
+
+  /** 【火攻】是否弃牌造成伤害 */
+  shouldHuogongDiscard(player, target) {
+    return shouldHuogongDiscard(player, target);
+  }
+
+  /**
+   * 朱雀羽扇：是否要把这张【杀】当火【杀】使用
+   * 判断依据：目标穿藤甲时绝对不要用火（会被 +1），
+   * 目标被横置（铁索）时用火能传导，价值高。
+   */
+  wantFireSha(player, targets) {
+    const t = targets && targets[0];
+    if (!t) return false;
+    // 目标有藤甲 → 千万别用火（火焰伤害 +1 反而害自己人）
+    for (const c of Object.values(t.equips).filter(Boolean)) {
+      const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
+      if (esid === 'tengjia_skill') return false;
+    }
+    // 目标横置且场上有其他横置角色 → 用火可传导
+    if (t.isChained) {
+      const others = this.game.players.filter((p) => p.alive && p !== t && p.isChained);
+      if (others.length) return true;
+    }
+    return false;
   }
 
   /* ---------------- 敌对关系 ---------------- */
@@ -473,7 +516,56 @@ export class AI {
             let v = marginal([5, 3, 1], usedSha);
             // 目标低血时更值（有机会击杀）
             if (t.hp <= 1) v += 3;
+            // 【酒】加成下这一刀更值
+            if ((player.storage.jiu || 0) > 0) v += 2;
             push(v, { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* ---------- 风林火山 ---------- */
+
+        /* 【酒】：残血时当【桃】用；否则留着配合【杀】 */
+        case 'jiu': {
+          if (player.hp <= 1 && player.isDamaged()) {
+            push(7.3, { type: 'use', card, targets: [player] });
+          } else if ((player.flags.jiuUsed || 0) === 0) {
+            // 手里有杀且能打到人时才值得
+            const hasSha = hand.some((c) => c.name === 'sha');
+            const canHit = enemies.some((p) => player.inAttackRange(p));
+            if (hasSha && canHit) push(4, { type: 'use', card, targets: [player] });
+          }
+          break;
+        }
+
+        /* 【火攻】：目标有手牌且自己花色能对上时 */
+        case 'huogong': {
+          const cands = enemies.filter((p) => p.countCards('h') > 0 && !this.cannotBeTarget(p, card));
+          if (cands.length) {
+            const t = this.pickTarget(player, cands, card);
+            push(4, { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* 【铁索连环】：多人横置时配合属性伤害，价值上升 */
+        case 'tiesuo': {
+          const cands = enemies.filter((p) => !this.cannotBeTarget(p, card));
+          if (cands.length >= 1) {
+            // 已有横置角色时价值更高（可传导）
+            const chained = this.game.players.filter((p) => p.alive && p.isChained).length;
+            push(chained >= 1 ? 4 : 2.5, { type: 'use', card, targets: cands.slice(0, 2) });
+          }
+          break;
+        }
+
+        /* 【兵粮寸断】：拖慢敌人关键角色 */
+        case 'bingliang': {
+          const cands = enemies.filter((p) => !this.cannotBeTarget(p, card)
+            && player.distanceTo(p) <= 1 && p.judges.length < 2);
+          if (cands.length) {
+            const t = this.pickTarget(player, cands, card);
+            push(3.5, { type: 'use', card, targets: [t] });
           }
           break;
         }
