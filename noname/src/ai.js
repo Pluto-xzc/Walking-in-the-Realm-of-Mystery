@@ -4,23 +4,141 @@
  * 设计原则：
  *   - 不追求最优，追求「合理且不自杀」
  *   - 基于身份推断敌对关系（attitude）
- *   - 关键判断：是否出闪/杀/桃/无懈、选牌价值
+ *   - 牌的价值参考无名杀 card/standard.js 的 useful / value 数值
+ *     （函数式的那几项已按其公式在本文件内重新实现，非复制代码）
  */
 
 import { CARDS } from './cards.js';
 
-/** 牌的基础价值（用于弃牌与选牌） */
-const CARD_VALUE = {
-  tao: 9, wuzhong: 8, wuxie: 7, shunshou: 7, guohe: 6.5,
-  juedou: 6, nanman: 6, wanjian: 6.5, wugu: 5.5, taoyuan: 5.5,
-  jiedao: 4.5, lebu: 5, shandian: 2,
-  sha: 5, shan: 5.5,
-  equip: 4,
+/* ==========================================================================
+ * 牌的价值表
+ * --------------------------------------------------------------------------
+ * 数值来源：无名杀 card/standard.js 的 ai.basic.useful / value
+ *   sha       [5, 3, 1]      第 1/2/3 张【杀】的边际价值递减
+ *   shan      [7, 5.1, 2]    越往后越不值钱
+ *   wuxie     [6, 4, 3]
+ *   taoyuan   [3, 1]
+ *   nanman    [5, 1]
+ *   guohe     10 / (3 + i)   第 i 张的边际价值
+ *   shunshou  8 / (3 + i)
+ *   wuzhong   4.5
+ *   wugu      0.5            （无名杀给的确实很低）
+ *   wanjian   1
+ *   juedou    1
+ *   jiedao    1
+ *   shandian  0
+ *   tao       [7, 5.1, 2] 一档（保命牌，见 taoValue）
+ *
+ * 说明：这些数值是「使用价值」，不是「收藏价值」。
+ * 弃牌时应当保留价值高的牌，所以下方 KEEP_VALUE 另有一套。
+ * ========================================================================== */
+
+/** 无名杀风格的「第 i 张牌的边际价值」取值 */
+function marginal(table, i) {
+  if (i < table.length) return table[i];
+  return table[table.length - 1];
+}
+
+/** 使用价值：这张牌此刻打出去值多少分（用于决定「要不要出」） */
+export function useValue(card, player, game, usedCount = 0) {
+  const n = card.name;
+  switch (n) {
+    case 'sha': return marginal([5, 3, 1], usedCount);
+    case 'shan': return marginal([7, 5.1, 2], usedCount);
+    case 'wuxie': return marginal([6, 4, 3], usedCount);
+    case 'taoyuan': return marginal([3, 1], usedCount);
+    case 'nanman': return marginal([5, 1], usedCount);
+    case 'guohe': return 10 / (3 + usedCount);
+    case 'shunshou': return 8 / (3 + usedCount);
+    case 'juedou': return 1;
+    case 'jiedao': return 1;
+    case 'wanjian': return 1;
+    case 'wugu': return 0.5;
+    case 'wuzhong': return 4.5;
+    case 'shandian': return 0;
+    case 'lebu': return 3.5;
+    case 'tao': return taoUseValue(card, player, game);
+    default:
+      if (CARDS[n] && CARDS[n].type === 'equip') return equipUseValue(card, player);
+      return 2;
+  }
+}
+
+/**
+ * 【桃】的使用价值
+ * 参考无名杀：只在有人濒死/残血时才值钱，否则接近 0。
+ * 越往后（手里桃越多）边际价值越低。
+ */
+function taoUseValue(card, player, game, i = 0) {
+  const allies = game.players.filter((p) => p.alive
+    && game.ai.attitude(player, p) < 0            // 友方（态度为负）
+    && p.hp <= 2);
+  let needs = 0, damaged = 0;
+  for (const f of allies) {
+    if (f.hp > 3) continue;
+    if (f.hp > 1) damaged++; else needs++;
+  }
+  if (needs && damaged) return 5 * needs + 3 * damaged;
+  if (needs) return 5 * needs;
+  if (damaged) return 3 * damaged;
+  // 自己残血时也该留
+  if (player.hp <= 2) return 4;
+  return 2 / (1 + i);
+}
+
+/** 装备的使用价值：空槽位才值得装，已有同类装备则价值很低 */
+function equipUseValue(card, player) {
+  const sub = CARDS[card.name].subtype;
+  const cur = player.equips[sub];
+  if (!cur) return 5;
+  // 已有装备：只在新的更好时才值得（简单比较攻击范围/无量化则看名字）
+  const curDef = CARDS[cur.name] || {};
+  const newDef = CARDS[card.name] || {};
+  const curRange = curDef.attackRange || 0;
+  const newRange = newDef.attackRange || 0;
+  if (newRange > curRange) return 3;
+  return 0.5;   // 换装基本没收益
+}
+
+/* ==========================================================================
+ * 保留价值：弃牌时优先丢哪些
+ * 与「使用价值」不同 —— 例如【无懈可击】平时不出，但绝不该丢。
+ * ========================================================================== */
+export const KEEP_VALUE = {
+  tao: 10, wuxie: 8.5, wuzhong: 7, shunshou: 6.5, guohe: 5.5,
+  juedou: 4, nanman: 4.5, wanjian: 4.5, wugu: 3.5, taoyuan: 4,
+  lebu: 4, jiedao: 3, shandian: 1,
+  sha: 4, shan: 6,
+  equip: 3.5,
 };
+
+/** 取一张牌的保留价值（用于弃牌与顺手牵羊选牌） */
+export function keepValue(card) {
+  const def = CARDS[card.name];
+  if (!def) return 1;
+  if (def.type === 'equip') {
+    // 武器/防具比马略值钱
+    const sub = def.subtype;
+    if (sub === 'equip1') return 4.5;
+    if (sub === 'equip2') return 4;
+    return 3;
+  }
+  return KEEP_VALUE[card.name] !== undefined ? KEEP_VALUE[card.name] : 2;
+}
 
 export class AI {
   constructor(game) {
     this.game = game;
+  }
+
+  /** 这张牌此刻的使用价值（供外部与 decision 使用） */
+  useValue(card, player, usedCount = 0) {
+    return useValue(card, player, this.game, usedCount);
+  }
+
+  /** 这张牌的保留价值（弃牌时用） */
+  cardValue(card) {
+    return keepValue(card);
   }
 
   /* ---------------- 敌对关系 ---------------- */
@@ -89,12 +207,6 @@ export class AI {
       if (v < bestVal) { bestVal = v; best = c; }
     }
     return best;
-  }
-
-  cardValue(card) {
-    if (!card) return 0;
-    if (card.type === 'equip') return CARD_VALUE.equip;
-    return CARD_VALUE[card.name] || 3;
   }
 
   /** 弃牌：弃价值最低的 n 张 */
@@ -214,119 +326,188 @@ export class AI {
    * 出牌阶段：选择动作
    * 返回 { type:'use'|'skill'|'end', card, targets, skill }
    */
+  /**
+   * 出牌阶段的决策
+   * ------------------------------------------------------------------
+   * 改为「给每个可选动作打分，取最高分」的方式。
+   * 相比原先的固定 if 顺序，好处是：
+   *   - 不会因为某个低价值动作排在前面就先出掉
+   *   - 分数可以直接对比（如「出杀」vs「留桃」）
+   *   - 调参只需改分值，不必调整分支顺序
+   *
+   * 分数参考无名杀的 useful/order 思路，但按本项目重新实现。
+   */
   decideAction(player) {
     const g = this.game;
-    const enemies = g.players.filter((p) => p.alive && p !== player && this.isEnemy(player, p));
     const hand = player.hand;
+    const enemies = g.players.filter((p) => p.alive && p !== player && this.isEnemy(player, p));
+    const friends = g.players.filter((p) => p.alive && p !== player && this.isFriend(player, p));
 
-    // 1. 濒死/受伤：优先桃
-    if (player.isDamaged()) {
-      const tao = hand.find((c) => c.name === 'tao');
-      if (tao && player.hp <= 1) {
-        return { type: 'use', card: tao, targets: [player] };
-      }
-    }
+    /** 候选动作：{ score, action } */
+    const options = [];
+    const push = (score, action) => {
+      if (score > 0) options.push({ score, action });
+    };
 
-    // 2. 无中生有
-    const wuzhong = hand.find((c) => c.name === 'wuzhong');
-    if (wuzhong) return { type: 'use', card: wuzhong, targets: [player] };
+    const usedSha = player.flags.usedShaThisTurn || 0;
 
-    // 3. 装备
-    for (const c of hand) {
-      if (c.type !== 'equip') continue;
-      const sub = CARDS[c.name].subtype;
-      const cur = player.equips[sub];
-      if (!cur || this.cardValue(c) > this.cardValue(cur)) {
-        return { type: 'use', card: c, targets: [] };
-      }
-    }
+    /* ---------- 逐张评估手牌 ---------- */
+    for (const card of hand) {
+      const name = card.name;
+      const def = CARDS[name];
+      if (!def) continue;
 
-    // 4. 桃（满血则留着）
-    const tao = hand.find((c) => c.name === 'tao');
-    if (tao && player.hp < player.maxHp) {
-      return { type: 'use', card: tao, targets: [player] };
-    }
-
-    // 5. 群体增益
-    const taoyuan = hand.find((c) => c.name === 'taoyuan');
-    if (taoyuan && player.isDamaged()) {
-      return { type: 'use', card: taoyuan, targets: [] };
-    }
-
-    // 6. 顺手牵羊 / 过河拆桥（对敌人）
-    for (const name of ['shunshou', 'guohe']) {
-      const c = hand.find((x) => x.name === name);
-      if (!c) continue;
-      const cands = enemies.filter((p) => {
-        if (p.countCards('hej') === 0) return false;
-        if (name === 'shunshou') {
-          const def = CARDS.shunshou;
-          if (!player.hasSkill('qicai') && player.distanceTo(p) > 1) return false;
+      switch (name) {
+        /* 【桃】：自己受伤时才用；濒死时价值极高 */
+        case 'tao': {
+          if (player.isDamaged()) {
+            const urgent = player.hp <= 1 ? 1.8 : 1.0;
+            push(taoUseValue(card, player, g) * urgent, { type: 'use', card, targets: [player] });
+          }
+          break;
         }
-        if (this.cannotBeTarget(p, c)) return false;
-        return true;
-      });
-      if (cands.length) {
-        const t = this.pickTarget(player, cands, c);
-        if (t) return { type: 'use', card: c, targets: [t] };
-      }
-    }
 
-    // 7. 乐不思蜀
-    const lebu = hand.find((c) => c.name === 'lebu');
-    if (lebu) {
-      const cands = enemies.filter((p) => !this.cannotBeTarget(p, lebu) && p.judges.length < 2);
-      if (cands.length) {
-        const t = this.pickTarget(player, cands, lebu);
-        if (t) return { type: 'use', card: lebu, targets: [t] };
-      }
-    }
+        /* 【无中生有】：永远是赚的，价值稳定 */
+        case 'wuzhong':
+          push(4.5, { type: 'use', card, targets: [player] });
+          break;
 
-    // 8. 决斗
-    const juedou = hand.find((c) => c.name === 'juedou');
-    if (juedou && enemies.length) {
-      const cands = enemies.filter((p) => !this.cannotBeTarget(p, juedou)
-        && player.countCards('he', (c) => c.name === 'sha') >= p.countCards('he', (c) => c.name === 'sha'));
-      if (cands.length) {
-        const t = this.pickTarget(player, cands, juedou);
-        if (t) return { type: 'use', card: juedou, targets: [t] };
-      }
-    }
-
-    // 9. 群体伤害（敌人多时）
-    for (const name of ['nanman', 'wanjian']) {
-      const c = hand.find((x) => x.name === name);
-      if (!c) continue;
-      const need = CARDS[name].name === 'nanman' ? 'sha' : 'shan';
-      const hitCount = enemies.filter((p) => p.countCards('he', (x) => x.name === need) === 0).length;
-      const friendHit = g.players.filter(
-        (p) => p.alive && p !== player && this.isFriend(player, p)
-          && p.countCards('he', (x) => x.name === need) === 0,
-      ).length;
-      if (hitCount >= 1 && hitCount >= friendHit) {
-        return { type: 'use', card: c, targets: [] };
-      }
-    }
-
-    // 10. 杀
-    const shas = hand.filter((c) => c.name === 'sha');
-    if (shas.length) {
-      const usedSha = player.flags.usedShaThisTurn || 0;
-      const unlimited = this.hasUnlimitedSha(player);
-      if (unlimited || usedSha < 1) {
-        const cands = enemies.filter((p) => player.inAttackRange(p) && !this.cannotBeTarget(p, shas[0]));
-        if (cands.length) {
-          const t = this.pickTarget(player, cands, shas[0]);
-          if (t) return { type: 'use', card: shas[0], targets: [t] };
+        /* 【桃园结义】：己方多人残血时才划算 */
+        case 'taoyuan': {
+          const hurtFriends = friends.filter((p) => p.hp < p.maxHp).length;
+          const hurtEnemies = enemies.filter((p) => p.hp < p.maxHp).length;
+          const selfHurt = player.hp < player.maxHp ? 1 : 0;
+          const gain = hurtFriends + selfHurt - hurtEnemies;
+          push(gain >= 2 ? 3 + gain : 0, { type: 'use', card, targets: [] });
+          break;
         }
+
+        /* 【五谷丰登】：按净收益（明显低于无名杀之外的经验值，故分很低） */
+        case 'wugu':
+          push(0.5, { type: 'use', card, targets: [] });
+          break;
+
+        /* 【南蛮入侵】/【万箭齐发】：比较敌方与友方的受伤期望 */
+        case 'nanman':
+        case 'wanjian': {
+          const need = name === 'nanman' ? 'sha' : 'shan';
+          const willHit = (p) => p.countCards('he', (c) => c.name === need) === 0;
+          const hitEnemy = enemies.filter(willHit).length;
+          const hitFriend = friends.filter(willHit).length;
+          // 敌方中招越多越值；误伤友方要扣分
+          const score = hitEnemy * 2.5 - hitFriend * 3.5;
+          push(score, { type: 'use', card, targets: [] });
+          break;
+        }
+
+        /* 【决斗】：手牌充裕才打，否则自伤 */
+        case 'juedou': {
+          const cands = enemies.filter((p) => !this.cannotBeTarget(p, card));
+          if (cands.length) {
+            const mySha = player.countCards('he', (c) => c.name === 'sha');
+            const t = this.pickTarget(player, cands, card);
+            const tSha = t.countCards('he', (c) => c.name === 'sha');
+            push(mySha > tSha ? 2.5 : 0, { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* 【顺手牵羊】：拿走敌人的牌，稳定赚 */
+        case 'shunshou': {
+          const cands = enemies.filter((p) => p.countCards('hej') > 0
+            && !this.cannotBeTarget(p, card)
+            && (player.hasSkill('qicai') || player.distanceTo(p) <= 1));
+          if (cands.length) {
+            const t = this.pickTarget(player, cands, card);
+            push(8 / (3 + this._usedThisTurn(player, 'shunshou')),
+              { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* 【过河拆桥】：比顺手略差（自己拿不到） */
+        case 'guohe': {
+          const cands = enemies.filter((p) => p.countCards('hej') > 0 && !this.cannotBeTarget(p, card));
+          if (cands.length) {
+            const t = this.pickTarget(player, cands, card);
+            push(10 / (3 + this._usedThisTurn(player, 'guohe')) * 0.8,
+              { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* 【乐不思蜀】：拖延敌人关键回合 */
+        case 'lebu': {
+          const cands = enemies.filter((p) => !this.cannotBeTarget(p, card) && p.judges.length < 2);
+          if (cands.length) {
+            const t = this.pickTarget(player, cands, card);
+            push(3.5, { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* 【借刀杀人】：条件苛刻，价值低 */
+        case 'jiedao': {
+          const holders = enemies.filter((p) => p.equips.equip1);
+          if (holders.length) {
+            push(1, { type: 'use', card, targets: [holders[0]] });
+          }
+          break;
+        }
+
+        /* 【闪电】：自己判定区空且收益为正时才放 */
+        case 'shandian': {
+          const okZone = player.judges.length < 2;
+          // 粗略估算：闪电对谁都是 3/4 概率造成 3 点伤害
+          const selfRisk = player.hp <= 2 ? -2 : 0;
+          push(okZone ? 1 + selfRisk : 0, { type: 'use', card, targets: [player] });
+          break;
+        }
+
+        /* 【杀】：边际价值随本回合已出杀数递减 */
+        case 'sha': {
+          if (!this.hasUnlimitedSha(player) && usedSha >= 1) break;
+          const cands = enemies.filter((p) => player.inAttackRange(p) && !this.cannotBeTarget(p, card));
+          if (cands.length) {
+            const t = this.pickTarget(player, cands, card);
+            let v = marginal([5, 3, 1], usedSha);
+            // 目标低血时更值（有机会击杀）
+            if (t.hp <= 1) v += 3;
+            push(v, { type: 'use', card, targets: [t] });
+          }
+          break;
+        }
+
+        /* 装备：空槽位才装 */
+        default:
+          if (def.type === 'equip') {
+            const v = equipUseValue(card, player);
+            if (v > 1) push(v, { type: 'use', card, targets: [] });
+          }
+          break;
       }
     }
 
-    // 11. 主动技
+    /* ---------- 主动技 ---------- */
     const activeSkill = this.pickActiveSkill(player);
-    if (activeSkill) return { type: 'skill', skill: activeSkill };
+    if (activeSkill) {
+      // 主动技通常有正收益，给一个中等偏上的基础分
+      push(4, { type: 'skill', skill: activeSkill });
+    }
 
-    return { type: 'end' };
+    /* ---------- 取最高分 ---------- */
+    if (!options.length) return { type: 'end' };
+    options.sort((a, b) => b.score - a.score);
+
+    // 【杀】只在没有更好选择时才用：避免为了出杀而放弃无中生有
+    const best = options[0];
+    if (best.score <= 0) return { type: 'end' };
+    return best.action;
+  }
+
+  /** 统计本回合已使用某张牌的次数（用于边际递减） */
+  _usedThisTurn(player, name) {
+    return (player.flags[`used_${name}`] || 0);
   }
 
   hasUnlimitedSha(player) {

@@ -27,10 +27,26 @@ export const SKILLS = {
     id: 'jianxiong', name: '奸雄',
     desc: '当你受到伤害后，你可以获得对你造成伤害的牌。',
     type: 'trigger', trigger: 'damageEnd',
-    filter: (ctx) => ctx.event.cards && ctx.event.cards.length > 0 && ctx.event.cards.some((c) => c.zone === 'processing'),
+    // 只要事件里带着「造成伤害的那张牌」就应可发动。
+    // 历史坑：这里曾写 c.zone === 'processing'，而引擎的处理区已改名为
+    // 'center'，导致该技能永不触发。现已改为只看牌是否存在，
+    // 并在 content 里过滤掉已被移出牌局的牌。
+    filter: (ctx) => {
+      const ev = ctx.event;
+      if (!ev || ev.num <= 0) return false;
+      const cs = (ev.cards && ev.cards.length) ? ev.cards : (ev.card ? [ev.card] : []);
+      return cs.length > 0;
+    },
     async content(ctx) {
-      const cards = ctx.event.cards.filter((c) => c.zone === 'processing');
-      if (cards.length) await ctx.player.gain(cards, 'gain2');
+      const ev = ctx.event;
+      const cs = (ev.cards && ev.cards.length) ? ev.cards : (ev.card ? [ev.card] : []);
+      // 只取当前确实还在场上、可以被获得的牌
+      const obtainable = cs.filter((c) => c && [
+        'hand', 'equip', 'judge', 'center', 'discard',
+      ].includes(c.zone));
+      if (obtainable.length) {
+        await ctx.player.gain(obtainable, 'gain2');
+      }
     },
   },
 

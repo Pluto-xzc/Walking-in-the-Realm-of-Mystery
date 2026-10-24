@@ -497,15 +497,16 @@ export class UI {
     const g = this.game;
     const wrap = $('#sgs-opponents');
 
-    // 按「出牌顺序」排列：从自己的下家开始依次排开。
-    // 这样左侧第一个就是下一个行动的角色，符合实际对战直觉。
-    const alive = g.players.filter((p) => p.alive);
-    const order = [...alive, ...g.players.filter((p) => !p.alive)];
-    const myIdx = order.indexOf(me);
-    const rotated = myIdx >= 0
-      ? [...order.slice(myIdx + 1), ...order.slice(0, myIdx)]
-      : order;
-    const sorted = rotated.filter((p) => p !== me);
+    // 按「行动顺序」排列：从 1 号位（主公）开始，依次 2→3→4→5。
+    // 与引擎的实际回合轮转顺序一致，便于预判下一个行动者。
+    const sorted = g.players
+      .filter((p) => p !== me)
+      .slice()
+      .sort((a, b) => {
+        // 存活者在前，阵亡者在后；各自内部按座位号
+        if (a.alive !== b.alive) return a.alive ? -1 : 1;
+        return a.seat - b.seat;
+      });
 
     // 座位顺序是否变化 —— 只有变化时才重建节点，否则原地更新
     const wantOrder = sorted.map((p) => p.id).join(',');
@@ -614,14 +615,13 @@ export class UI {
     }
   }
 
-  /** 座位号显示文本（从自己开始，自己为 1 号位） */
-  seatLabel(player, me) {
-    if (player === me) return '1';
-    const g = this.game;
-    const n = g.players.length;
-    // 以自己为 1 号，按座位顺序递增
-    const diff = (player.seat - me.seat + n) % n;
-    return String(diff + 1);
+  /** 座位号显示文本
+   * ----------------------------------------------------------------
+   * 使用**绝对座位号**（主公固定 1 号位），不随玩家位置变化。
+   * 这样「1 号位 = 主公」始终成立，便于判断行动顺序与身份。
+   */
+  seatLabel(player) {
+    return String(player.seat + 1);
   }
 
   buildPlayerNode(p, isSelf) {
@@ -646,13 +646,14 @@ export class UI {
     const grp = GROUPS[p.group];
     avWrap.appendChild(el('div', 'sgs-group-badge', grp.label)).style.background = grp.color;
 
-    // 座位号（左上角，便于识别行动顺序）
+    // 座位号（左上角）：绝对座位号，主公固定为 1 号位
     const me = g.players.find((x) => x.isHuman) || g.players[0];
-    const seatEl = el('div', 'sgs-seat-badge', this.seatLabel(p, me));
+    const seatNo = this.seatLabel(p);
+    const seatEl = el('div', 'sgs-seat-badge', seatNo);
     if (p === me) seatEl.classList.add('me');
-    seatEl.title = p === me
-      ? '你是 1 号位'
-      : `站位 ${this.seatLabel(p, me)} 号（以你为 1 号）`;
+    seatEl.title = `${seatNo} 号位`
+      + (p.isZhu ? '（主公）' : '')
+      + (p === me ? '（你）' : '');
     avWrap.appendChild(seatEl);
 
     // 身份
@@ -782,8 +783,8 @@ export class UI {
     const grp = GROUPS[me.group];
     const nameEl = $('#sgs-self-name');
     nameEl.innerHTML = '';
-    // 座位号（自己固定为 1）
-    const seatSelf = el('span', 'grp', '1 号位');
+    // 座位号（用绝对座位号，主公固定 1 号位）
+    const seatSelf = el('span', 'grp', `${this.seatLabel(me)} 号位`);
     seatSelf.style.background = IDENTITY_COLOR[me.identity] || '#3d8b6e';
     seatSelf.style.opacity = '0.9';
     nameEl.appendChild(seatSelf);

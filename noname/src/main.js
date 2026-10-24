@@ -29,53 +29,49 @@ async function boot() {
   const count = 5;
 
   // ---- 身份分配 ----
-  // 规则：主公固定在 1 号位（seat 0），其余身份随机分配到 2~5 号位。
-  // 这样行动顺序就是「主公先手 → 2 号 → 3 号 → …」，符合身份模式惯例。
+  // 规则（按你的要求）：
+  //   - 主公固定在 1 号位（seat 0），行动顺序 1→2→3→4→5
+  //   - 其余身份（忠臣/反贼/反贼/内奸）随机分配到 2~5 号位
+  //   - 玩家**随机**坐在 2~5 号位之一（不再固定）
+  //   - 例外：若玩家选了常备主公武将，则玩家坐 1 号位当主公
+  const humanIsLord = LORD_CHARS.includes(humanChar);
+
   const others = IDENTITY_5.filter((x) => x !== 'zhu');   // ['zhong','fan','fan','nei']
   for (let i = others.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [others[i], others[j]] = [others[j], others[i]];
   }
-  const idents = ['zhu', ...others];
+
+  // 玩家座位：随机落在 2~5 号位（绝对下标 1~4）
+  const humanSeat = 1 + Math.floor(Math.random() * (count - 1));
 
   // ---- 武将分配 ----
-  // 主公从常备主公中选；其余随机（且不与已选重复）
-  const lordIds = LORD_CHARS.slice();
+  const lordIds = LORD_CHARS.filter((c) => c !== humanChar);
   for (let i = lordIds.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [lordIds[i], lordIds[j]] = [lordIds[j], lordIds[i]];
   }
-  const lordChar = lordIds.find((c) => c !== humanChar)
-    || ALL_CHARS.find((c) => c !== humanChar);
+  const lordChar = lordIds[0] || ALL_CHARS.find((c) => c !== humanChar);
+
+  // 身份顺序：1 号位固定主公，其余按打乱后的顺序分配到 2~5 号位
+  const idents = ['zhu', ...others];
 
   const used = new Set([humanChar, lordChar]);
   const seatConfig = [];
   for (let i = 0; i < count; i++) {
+    // 玩家坐在哪：默认随机位；若玩家自己是主公则坐 1 号位
+    const isHuman = humanIsLord ? (i === 0) : (i === humanSeat);
     let charId;
     if (i === 0) {
-      charId = lordChar;                       // 1 号位永远主公
-    } else if (i === 1) {
-      charId = humanChar;                      // 玩家固定在 2 号位
+      charId = humanIsLord ? humanChar : lordChar;   // 1 号位永远是主公
+    } else if (isHuman) {
+      charId = humanChar;
     } else {
-      const p = ALL_CHARS.filter((c) => !used.has(c));
-      charId = p[Math.floor(Math.random() * p.length)];
+      const pool = ALL_CHARS.filter((c) => !used.has(c));
+      charId = pool[Math.floor(Math.random() * pool.length)];
     }
     used.add(charId);
-    seatConfig.push({
-      charId,
-      identity: idents[i],
-      // 玩家在 2 号位；若玩家自己就是主公（选了常备主公），则玩家坐 1 号位
-      isHuman: i === 1,
-    });
-  }
-
-  // 若玩家选的武将本身就是常备主公，则让玩家坐 1 号位当主公
-  const humanIsLord = LORD_CHARS.includes(humanChar);
-  if (humanIsLord) {
-    seatConfig[0].charId = humanChar;
-    seatConfig[0].isHuman = true;
-    seatConfig[1].charId = lordChar;
-    seatConfig[1].isHuman = false;
+    seatConfig.push({ charId, identity: idents[i], isHuman });
   }
 
   // 创建游戏

@@ -13,13 +13,42 @@
  */
 
 import { CARDS, DECK_LIST, SUITS, numberLabel, makeEmptyEquips, EQUIP_SLOTS } from './cards.js';
+import { CHARACTERS } from './characters.js';
+import { SKILLS } from './skills.js';
 
-/** 槽位 short 名，用于日志（避免循环依赖，这里内联一份） */
+/**
+ * 牌所在区域（zone）的权威定义
+ * ------------------------------------------------------------------
+ * 统一用这里的常量，避免出现「一处写 'processing'、另一处写 'center'」
+ * 这类字符串漂移（曾导致【奸雄】永不触发）。
+ *
+ *   deck      牌堆
+ *   hand      手牌
+ *   equip     装备区
+ *   judge     判定区
+ *   center    中央区（本回合处理区，同时算弃牌堆的一部分）
+ *   discard   弃牌堆
+ *   flying    临时态：刚从牌堆取出、尚未落入任何区域的牌
+ */
+export const ZONE = {
+  DECK: 'deck',
+  HAND: 'hand',
+  EQUIP: 'equip',
+  JUDGE: 'judge',
+  CENTER: 'center',
+  DISCARD: 'discard',
+  FLYING: 'flying',
+};
+
+/** 这些区域的牌可被「获得/拿走」类效果取用 */
+export const OBTAINABLE_ZONES = [
+  ZONE.HAND, ZONE.EQUIP, ZONE.JUDGE, ZONE.CENTER, ZONE.DISCARD,
+];
+
+/** 槽位 short 名，用于日志 */
 const EQUIP_SLOT_MAP_SHORT = {
   equip1: '武器', equip2: '防具', equip5: '宝物', equip4: '进攻马', equip3: '防御马',
 };
-import { CHARACTERS } from './characters.js';
-import { SKILLS } from './skills.js';
 
 let uid = 0;
 const nextId = () => ++uid;
@@ -279,21 +308,37 @@ export class Player {
     return true;
   }
 
+  /**
+   * 响应式打出一张牌（如【护驾】【激将】请他人代打）
+   * ------------------------------------------------------------------
+   * 注意：语义是「**打出**」，因此选定后必须真正把牌移出该角色手牌
+   * 并置入中央区。早期实现只返回牌不移除，会造成同一个角色的【闪】
+   * 被反复使用（重复使用漏洞）。
+   *
+   * @returns {{bool: boolean, cards: Card[]}}
+   */
   async chooseToRespond({ prompt, pattern }) {
     const cards = this.getCards('h', (c) => this.matchFilter(c, pattern));
     if (!cards.length) return { bool: false, cards: [] };
-    // AI 判断
+
+    let chosen = [];
     if (!this.isHuman) {
       const ai = this.game.ai;
-      if (ai.shouldRespond(this, pattern, prompt)) {
-        return { bool: true, cards: [cards[0]] };
-      }
-      return { bool: false, cards: [] };
+      if (ai.shouldRespond(this, pattern, prompt)) chosen = [cards[0]];
+      else return { bool: false, cards: [] };
+    } else {
+      const picked = await this.game.io.chooseCards(this, {
+        prompt, position: 'h', min: 1, max: 1, filter: pattern, cancelable: true,
+      });
+      if (!picked || !picked.length) return { bool: false, cards: [] };
+      chosen = picked;
     }
-    const picked = await this.game.io.chooseCards(this, {
-      prompt, position: 'h', min: 1, max: 1, filter: pattern, cancelable: true,
-    });
-    return picked && picked.length ? { bool: true, cards: picked } : { bool: false, cards: [] };
+
+    // 真正打出：移出手牌并进入中央区（回合结束后归档进弃牌堆）
+    await this.loseCards(chosen);
+    this.game.toCenter(chosen);
+    this.game.log(`${this.name} 打出了 ${chosen.map((c) => c.text).join('、')}`);
+    return { bool: true, cards: chosen };
   }
 
   /** 从其他玩家处选牌 */
@@ -484,7 +529,7 @@ export class Game {
       if (!this.deck.length) this.reshuffle();
       if (!this.deck.length) break;
       const c = this.deck.pop();
-      c.zone = 'processing';
+      c.zone = ZONE.FLYING;
       out.push(c);
     }
     return out;
@@ -496,7 +541,7 @@ export class Game {
       if (!this.deck.length) this.reshuffle();
       if (!this.deck.length) break;
       const c = this.deck.shift();
-      c.zone = 'processing';
+      c.zone = ZONE.FLYING;
       out.push(c);
     }
     return out;
@@ -939,7 +984,7 @@ export class Game {
     await this.checkSkills('judgeEnd', ev);
 
     // 判定牌处理
-    if (card.zone === 'processing') {
+    if (card.zone === ZONE.FLYING) {
       this.toDiscard(card);
       card.zone = 'discard';
     }
@@ -1059,7 +1104,7 @@ export class Game {
     for (const card of player.judges.slice()) {
       if (!player.judges.includes(card)) continue;
       player.judges.splice(player.judges.indexOf(card), 1);
-      card.zone = 'processing';
+      card.zone = ZONE.FLYING;
       this.emit();
 
       if (card.name === 'lebu') {
@@ -1179,6 +1224,36 @@ export class Game {
 
     this.log(`${player.name} 使用【${card.fullname}】${card.sourceCards && card.sourceCards.length ? `（${card.sourceCards.map((c) => c.text).join('、')}）` : ''}`);
 
+    // ============================================================
+    // 装备牌：走独立路径，**不经过中央区/弃牌堆**
+    // 参考无名杀 content.js 的 equip() / replaceEquip()：
+    //   - 装备牌从手牌直接移入装备区
+    //   - 只有被顶掉的【旧装备】才进弃牌堆
+    //   - 新装备本身绝不进入处理区
+    // ============================================================
+    if (def.type === 'equip') {
+      // 从手牌移除（如果是从手牌使用的）
+      if (card.sourceCards && card.sourceCards.length) {
+        await player.loseCards(card.sourceCards);
+      } else if (player.getCards('he').includes(card)) {
+        await player.loseCards([card]);
+      }
+      // 装备区被废除时不消耗这张牌，退回手牌
+      if (player.isEquipSlotDisabled(def.subtype)) {
+        this.log(`${player.name} 的${EQUIP_SLOT_MAP_SHORT[def.subtype] || def.subtype}区已被废除，【${card.fullname}】无法装备`);
+        if (!player.hand.includes(card)) {
+          card.zone = 'hand';
+          card.owner = player;
+          player.hand.push(card);
+        }
+        this.emit();
+        return;
+      }
+      await this.checkSkills('cardUsed', { player, card, targets });
+      await this.equipCard(player, card);
+      return;
+    }
+
     // 移除实体牌，并置入中央区（本回合处理区）
     // 中央区的牌同时算作弃牌堆的一部分，回合结束后归档。
     if (card.sourceCards && card.sourceCards.length) {
@@ -1248,26 +1323,31 @@ export class Game {
       return false;
     }
 
+    // 只有【同槽位的旧装备】才进弃牌堆（顶掉规则）
+    // 参考无名杀 replaceEquip()：仅替换相同 subtype 的装备。
     const old = player.equips[sub];
-    if (old) {
+    if (old && old !== card) {
       await player.loseCards([old]);
       player.equips[sub] = null;
       this.toDiscard(old);
       old.zone = 'discard';
     }
 
-    // 从原本所在的区域移除（手牌 / 其他角色处等）
-    // 这一步很重要：否则牌会同时存在于手牌和装备区。
+    // 从「其他区域」移除这张牌，避免同一张牌同时存在于多处。
+    // 注意：不能清掉 player.equips[sub] 本身，那是我们马上要写入的槽位。
     const hi = player.hand.indexOf(card);
     if (hi >= 0) player.hand.splice(hi, 1);
     for (const p of this.players) {
       const j = p.judges.indexOf(card);
       if (j >= 0) p.judges.splice(j, 1);
-      // 从他人的装备区移除（顺手牵羊等来源）
+      // 从任何人的装备区移除（顺手牵羊等来源），但不碰当前要装备的槽位
       for (const k of Object.keys(p.equips)) {
-        if (p.equips[k] === card) p.equips[k] = null;
+        if (p.equips[k] === card && !(p === player && k === sub)) p.equips[k] = null;
       }
     }
+
+    // 最后确认这张牌不在任何弃牌/中央区（装备牌不应出现在那里）
+    this._removeFromPiles(card);
 
     player.equips[sub] = card;
     card.zone = 'equip';
@@ -1275,6 +1355,17 @@ export class Game {
     this.log(`${player.name} 装备了【${card.fullname}】`);
     this.emit();
     return true;
+  }
+
+  /**
+   * 把一张牌从弃牌堆与中央区移除
+   * 用于装备牌：它应当只存在于装备区，不该出现在弃牌/处理区。
+   */
+  _removeFromPiles(card) {
+    const di = this.discardPile.indexOf(card);
+    if (di >= 0) this.discardPile.splice(di, 1);
+    const ci = this.centerZone.indexOf(card);
+    if (ci >= 0) this.centerZone.splice(ci, 1);
   }
 
   /* ---------------- 无懈可击 ---------------- */
@@ -1376,16 +1467,20 @@ export class Game {
       }
     }
 
-    // 护驾
+    // 护驾（主公技）：由其他魏势力角色替你打出【闪】
     if (target.hasSkill('hujia') && target.isZhu) {
-      const hasWei = this.players.some((p) => p !== target && p.alive && p.group === 'wei' && p.canUseAsShan());
+      const hasWei = this.players.some((p) => p !== target && p.alive
+        && p.group === 'wei' && p.canUseAsShan());
       if (hasWei) {
         const ctx = { player: target, game: this, event: { card, source }, skill: SKILLS.hujia };
         const use = await this.io.askSkill(target, SKILLS.hujia, ctx);
         if (use) {
           const ok = await SKILLS.hujia.content(ctx);
           if (ok) {
-            this.log(`${target.name} 发动【护驾】获得【闪】`);
+            const helper = ctx.event.hujiaFrom;
+            const hcard = ctx.event.hujiaCard;
+            this.log(`${target.name} 发动【护驾】，${helper ? helper.name : '魏势力角色'}`
+              + ` 代为打出【闪】${hcard ? `（${hcard.text}）` : ''}`);
             return true;
           }
         }
@@ -1478,7 +1573,7 @@ export class Game {
     }
   }
 
-  async askSha(player, opponent) {
+  async askSha(player, opponent, reason = 'juedou') {
     let cards = player.getCards('he', (c) => c.name === 'sha');
     let viaSkill = null;
     if (!cards.length && player.hasSkill('wusheng')) {
@@ -1491,9 +1586,18 @@ export class Game {
     }
     if (!cards.length) return false;
 
+    // 提示语随来源变化，避免【南蛮入侵】错显为【决斗】
+    const REASON_LABEL = {
+      juedou: '【决斗】',
+      nanman: '【南蛮入侵】',
+      jiedao: '【借刀杀人】',
+      sha: '响应【杀】',
+    };
+    const label = REASON_LABEL[reason] || '';
+
     if (player.isHuman) {
       const picked = await this.io.chooseCards(player, {
-        prompt: `【决斗】：打出一张【杀】${viaSkill ? `（${SKILLS[viaSkill].name}）` : ''}`,
+        prompt: `${label}：打出一张【杀】${viaSkill ? `（${SKILLS[viaSkill].name}）` : ''}`,
         position: 'he', min: 1, max: 1,
         filter: viaSkill === 'wusheng' ? (c) => c.color === 'red'
           : viaSkill === 'longdan' ? (c) => c.name === 'shan'
@@ -1597,7 +1701,7 @@ export class Game {
       }
       let has = false;
       if (needSha) {
-        has = await this.askSha(target, player);
+        has = await this.askSha(target, player, card.name);
       } else {
         has = await this.askShan(target, player, card);
       }
