@@ -160,7 +160,7 @@
 - **梦想协奏**
   - **Roselia**
     - [今井莉莎](gamedata/character/jjls.md)
-    - [白金燐子](gamedata/character/bjlz.md)
+    - [白金磷子](gamedata/character/bjlz.md)
     - [凑友希那](gamedata/character/cyxn.md)
     - [冰川纱夜](gamedata/character/bcsy.md)
     - [宇川田亚子](gamedata/character/yctyz.md)
