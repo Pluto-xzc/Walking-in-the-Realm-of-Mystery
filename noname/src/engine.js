@@ -14,7 +14,7 @@
 
 import { CARDS, DECK_LIST, SUITS, numberLabel, makeEmptyEquips, EQUIP_SLOTS } from './cards.js';
 import { CHARACTERS } from './characters.js';
-import { SKILLS } from './skills.js';
+import { SKILLS, noteSuitUsed } from './skills.js';
 import { flushExcludedOnDeath, tryResetAngyang, markAngyangUsed, isAngyangUsed } from './mechanics.js';
 import {
   noteIgnitedDiscard, isIgnited, checkDetachAutoReturn, isDetached,
@@ -32,6 +32,11 @@ import {
   noteHpChange, resolveXumou, xumouCardsOf, isHidden, exitHidden,
   enterHidden, tryZhuanYun, cannotRespond, cannotBlockTriggerSkill,
   isInquirySkipped, SKIP_KINDS,
+} from './mechanics.js';
+import {
+  tickZhanfaRoundEnd, tickZhanfaOnTao, resetOccupyRound,
+  clearOccupyOnDeath, occupierOf, OCCUPY_ZONES, noteOptionResolved,
+  refreshZhouShi, zhinangCards,
 } from './mechanics.js';
 
 /**
@@ -275,6 +280,23 @@ export class Player {
     this.hiddenSkills = [];
     /** 隐匿状态下被隐藏的原始信息 */
     this.hiddenSnapshot = null;
+
+    /**
+     * 翻面状态（参考无名杀 isTurnedOver / turnOver）
+     * ------------------------------------------------------------------
+     * true = 武将牌**反面向上**。
+     * 规则：反面向上时跳过其整个回合，跳过回合后翻回正面。
+     */
+    this.isTurnedOver = false;
+
+    /**
+     * 【占用】记录
+     * ------------------------------------------------------------------
+     * { zone: { by, part, untilTurn, untilDeath, roundConverted, ... } }
+     * 同一区域仅能被一名角色占用（按最新占用适用）；
+     * 未声明期限默认双方一人死亡时解除。
+     */
+    this.occupied = {};
 
     this.flags = {};          // 回合内标记
     this.storage = {};        // 持久数据
@@ -919,6 +941,15 @@ export class Game {
      */
     this.renku = [];
 
+    /**
+     * 智囊牌（官方机制）
+     * ------------------------------------------------------------------
+     * 牌的一类标签。本项目按需求方指定为 3 张：
+     *   【无中生有】【过河拆桥】【无懈可击】
+     * 技能可通过 setZhinangCards / addZhinangCard 增减。
+     */
+    this.zhinangTricks = zhinangCards(null).slice();
+
     /* 展示中（瞬时公开，区别于明置） */
     this.showingCards = [];
     this.showingBy = null;
@@ -954,6 +985,68 @@ export class Game {
 
   /** 该角色是否处于隐匿状态 */
   isHidden(player) { return isHidden(player); }
+
+  /* ============================================================
+   * 「同一结算」块（供【前行的决心】等技能使用）
+   * ============================================================
+   * 语义（按需求方给定）：
+   *   · 块内发生的**打断性结算**（濒死）先**排队**，不立即处理；
+   *   · **血量照常扣**，只是不走濒死流程；
+   *   · 块结束后，才**依次**处理积压的濒死。
+   *   · 同时维护一个「本块内出现过的花色」集合，
+   *     供【怯懦的琴键】的「仄」累积封锁。
+   */
+  beginSameResolution(label = '') {
+    this._deferDepth = (this._deferDepth || 0) + 1;
+    if (this._deferDepth === 1) {
+      this._deferred = [];
+      this._blockSuits = [];
+      this._blockLabel = label;
+      this.log(`—— 「同一结算」开始${label ? `（${label}）` : ''} ——`);
+    }
+    return this._deferDepth;
+  }
+
+  /**
+   * 结束「同一结算」块，并依次处理积压的濒死
+   * @returns {Promise<number>} 处理掉的积压数量
+   */
+  async endSameResolution() {
+    this._deferDepth = Math.max(0, (this._deferDepth || 0) - 1);
+    if (this._deferDepth > 0) return 0;
+
+    const pending = this._deferred || [];
+    this._deferred = [];
+    const label = this._blockLabel;
+    this._blockLabel = null;
+    this.log(`—— 「同一结算」结束${label ? `（${label}）` : ''}，`
+      + `开始处理 ${pending.length} 项积压结算 ——`);
+
+    // 依次处理积压的濒死
+    for (const item of pending) {
+      if (item.kind !== 'dying') continue;
+      if (this.over) break;
+      if (!item.player || !item.player.alive) continue;
+      if (item.player.hp > 0) continue;    // 期间已被救回
+      await this.enterDying(item.player, item.source);
+    }
+    this._blockSuits = null;
+    this.emit();
+    return pending.length;
+  }
+
+  /** 该牌的花色是否在本「同一结算」块内出现过（供「仄」累积封锁） */
+  isSuitSeenInBlock(suit) {
+    if (!suit || !this._blockSuits) return false;
+    return this._blockSuits.includes(suit);
+  }
+
+  /** 记录花色进入本「同一结算」块 */
+  noteBlockSuit(suit) {
+    if (!suit) return;
+    this._blockSuits = this._blockSuits || [];
+    if (!this._blockSuits.includes(suit)) this._blockSuits.push(suit);
+  }
 
   /* ============================================================
    * 弃牌堆 / 中央区
@@ -2029,7 +2122,26 @@ export class Game {
 
     await this.checkSkills('damageEnd', ev);
 
-    if (target.hp <= 0) await this.enterDying(target, source);
+    /*
+     * 【同一结算】的延迟处理
+     * ----------------------------------------------------------------
+     * 需求方给定（白金磷子【前行的决心】）：
+     *   「连用 3 张【南蛮】打郭嘉 3 血，他的濒死结算和技能的摸牌
+     *     都得等『前行的决心』**完全结算后**才能进行结算」
+     *   「血量照常扣，只是不立即走濒死流程」
+     *
+     * 因此在「同一结算」块内（_deferDepth > 0）时，
+     * 把濒死 **排队**而不是立即结算，由块结束时统一依次处理。
+     */
+    if (target.hp <= 0) {
+      if (this._deferDepth > 0) {
+        this._deferred = this._deferred || [];
+        this._deferred.push({ kind: 'dying', player: target, source });
+        this.log(`${target.name} 进入濒死（因「同一结算」暂缓处理）`);
+      } else {
+        await this.enterDying(target, source);
+      }
+    }
 
     // 铁索连环：把本次属性伤害传导给其他横置角色
     // 注意：传导产生的伤害本身也是同属性，会继续链式传导（由递归自然完成）
@@ -2398,6 +2510,14 @@ export class Game {
     // （本扩「除外」机制规则之一：牌只在主人存活期间被移出游戏）
     flushExcludedOnDeath(player);
 
+    /*
+     * 【占用】的到期清理
+     * ----------------------------------------------------------------
+     * 需求方给定：**未声明占用期限默认双方一人死亡**时解除。
+     * 因此角色一死，他作为占用者的记录、以及他身上的占用都要清掉。
+     */
+    clearOccupyOnDeath(player);
+
     this.emit();
 
     // 奖惩
@@ -2567,6 +2687,13 @@ export class Game {
           if (this.over) break;
           resetMoRound(this);           // 新一轮重新开始统计伤害
 
+          /*
+           * 【阵法技】默认时机①：每轮结束后术法 +1
+           * 【占用】体力区的「每轮最多 1 点」计数也要在新一轮重置
+           */
+          tickZhanfaRoundEnd(this);
+          resetOccupyRound(this);
+
           this.roundCount = (this.roundCount || 1) + 1;
           await this.runDestinyTurns();
           if (this.over) break;
@@ -2606,6 +2733,24 @@ export class Game {
     this._inCurrentTurn = true;      // 期间弃置的牌保留在中央区
     player.clearFlags();
     player.storage.rendeCount = 0;
+
+    /*
+     * 翻面（反面向上）：跳过其整个回合，跳过之后翻回正面
+     * ----------------------------------------------------------------
+     * 参考无名杀：`isTurnedOver` 为真时跳过回合，`turnOver()` 翻回。
+     */
+    if (player.isTurnedOver) {
+      player.isTurnedOver = false;
+      this.log(`—— ${player.name} 反面向上，跳过其回合（翻回正面）——`);
+      // 仍要维护额定回合/轮次计数，否则会影响命运回合的判定
+      this._turnIsRated = !player.extraTurn;
+      if (player.extraTurn) player.extraTurn = false;
+      markRatedTurnStarted(this, player);
+      this.emit();
+      this._inCurrentTurn = false;
+      this.flushCenterZone();
+      return;
+    }
 
     /*
      * 【额定回合】标记
@@ -3177,6 +3322,27 @@ export class Game {
       targets: targets || [],
       _snapBefore: card && card._snapBefore,
     });
+
+    /*
+     * 【结算中出现过的花色】记录
+     * ----------------------------------------------------------------
+     * 白金磷子【怯懦的琴键】的「仄」需要一个「本回合结算中出现过的
+     * 花色」集合。这里在每次牌结算完毕后记录其花色。
+     */
+    if (card && card.suit) {
+      this._resolvedSuits = this._resolvedSuits || [];
+      if (!this._resolvedSuits.includes(card.suit)) {
+        this._resolvedSuits.push(card.suit);
+      }
+      // 「同一结算」块内也累积记录（供「仄」封锁）
+      this.noteBlockSuit(card.suit);
+    }
+
+    /*
+     * 【前行的决心】「已受伤时，每个花色首次使用后从牌堆底摸一张」
+     * 注意只在**使用者自己**满足条件时生效。
+     */
+    await noteSuitUsed(player, card, this);
   }
 
   /* ============================================================
@@ -3699,6 +3865,12 @@ export class Game {
   async resolveTao(player, targets) {
     const t = (targets && targets[0]) || player;
     await t.recover(1);
+    /*
+     * 【阵法技】默认时机②：**自己用【桃】回复体力**时术法 +1。
+     * 注意要求是「自己用【桃】」，因此这里对**使用者**结算
+     *（且必须确实是【桃】，急救之类的红色牌不算 —— 由调用方区分）。
+     */
+    tickZhanfaOnTao(player);
   }
 
   async resolveJuedou(player, targets) {
