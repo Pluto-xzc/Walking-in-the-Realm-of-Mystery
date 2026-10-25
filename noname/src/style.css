@@ -1804,6 +1804,80 @@ html, body {
   font-size: 13px; padding: 6px 16px;
 }
 
+/* ------------------------------------------------------------------
+   本扩机制的牌面角标
+   ------------------------------------------------------------------
+   【横置牌】需求方确认用角标表示（不做旋转）。
+     注意：横置牌的**内容对他人不可见**，公开的只是「横置」这个状态。
+     所以横置**不能**用「明置」那种高亮光圈表示，
+     否则会让人误以为内容也公开了。这里只用角标区分。
+   【明置牌】角标 + 青光，表示此牌内容对所有人公开。
+   【明置 + 横置】两者叠加，角标同时出现（需求方特别提醒过）。
+   ------------------------------------------------------------------ */
+.sgs-card-tag {
+  position: absolute;
+  font-size: 9px;
+  line-height: 1.25;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: #fff;
+  pointer-events: none;
+  letter-spacing: 0;
+  z-index: 3;
+}
+/* 明置角标放左上，横置角标放右上，叠加时不会互相遮挡 */
+.sgs-card-tag.revealed { top: 2px; left: 2px; background: #2f8f7a; }
+.sgs-card-tag.horizontal { top: 2px; right: 2px; background: #c07a1e; }
+
+/* 明置的牌加一圈青光，便于一眼看出内容是公开的 */
+.sgs-card.is-revealed {
+  box-shadow: 0 0 0 2px rgba(47, 143, 122, 0.75);
+}
+/* 横置**不**加光圈：它的内容仍然不可见，只是状态公开 */
+.sgs-card.is-horizontal .card-back {
+  border-color: #c07a1e;
+}
+
+/* 角色详情里的明置 / 横置区块配色 */
+.sgs-detail-pop .dp-revealed { color: #7fd4c0; }
+.sgs-detail-pop .dp-horizontal { color: #e0b070; }
+.sgs-detail-pop .dp-xumou { color: #b98ad4; }
+.sgs-detail-pop .dp-xumou.dim { color: #8a7d6b; font-style: italic; }
+
+/* ------------------------------------------------------------------
+   【隐匿】状态：武将牌、体力、性别都不可见
+   ------------------------------------------------------------------ */
+.sgs-hidden-avatar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  color: #6b6255;
+  background: repeating-linear-gradient(
+    45deg, #2a2620, #2a2620 6px, #322d26 6px, #322d26 12px);
+  border: 1px dashed #5a5348;
+  box-sizing: border-box;
+}
+.sgs-player.is-hidden-player .sgs-pname {
+  color: #6b6255;
+  letter-spacing: 2px;
+}
+.sgs-hp-hidden {
+  font-size: 11px;
+  color: #6b6255;
+  padding: 1px 6px;
+  border: 1px dashed #5a5348;
+  border-radius: 3px;
+}
+.sgs-badge.xumou {
+  background: #6b4fa8;
+}
+.sgs-badge.hidden-badge {
+  background: #4a4a4a;
+}
+
 /*
   选牌 / 选目标 提示条
   ------------------------------------------------------------------

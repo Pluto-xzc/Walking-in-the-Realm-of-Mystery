@@ -16,6 +16,23 @@ import { CARDS, DECK_LIST, SUITS, numberLabel, makeEmptyEquips, EQUIP_SLOTS } fr
 import { CHARACTERS } from './characters.js';
 import { SKILLS } from './skills.js';
 import { flushExcludedOnDeath, tryResetAngyang, markAngyangUsed, isAngyangUsed } from './mechanics.js';
+import {
+  noteIgnitedDiscard, isIgnited, checkDetachAutoReturn, isDetached,
+  applyEnchantMod, markRatedTurnStarted,
+} from './mechanics.js';
+import {
+  invalidateRevealed, isLinkedCard, cascadeDiscardLinked, cascadeGainLinked,
+  destinyTurnOrder, hasDestinyTurn, checkCombo,
+} from './mechanics.js';
+import {
+  addToRenku, renkuCards, tickShifa, checkMoRoundEnd, resetMoRound,
+  triggerFailedSave, markQidingUsed, markMoDamaged,
+} from './mechanics.js';
+import {
+  noteHpChange, resolveXumou, xumouCardsOf, isHidden, exitHidden,
+  enterHidden, tryZhuanYun, cannotRespond, cannotBlockTriggerSkill,
+  isInquirySkipped, SKIP_KINDS,
+} from './mechanics.js';
 
 /**
  * 牌所在区域（zone）的权威定义
@@ -237,6 +254,28 @@ export class Player {
     this.hujia = 0;
     this.maxHujia = 0;        // 上限（多数情况等于初始护甲）
 
+    /**
+     * 【溢出体力】机制（本扩新增）
+     * ------------------------------------------------------------------
+     * 为 true 时，回复体力**溢出的部分会转为等量护甲**。
+     */
+    this.hpOverflow = false;
+
+    /**
+     * 【隐匿】状态
+     * ------------------------------------------------------------------
+     * 拥有「隐匿技」的角色初始为隐匿状态：
+     *   · 不可见：武将牌、体力值、体力上限、**性别（视为「无」）**
+     *   · 受到伤害时防止该伤害后登场；或其回合开始时登场
+     *   · 重新隐匿会令角色重新进入隐匿状态
+     * 注意（按需求方要求）：技能**不删除**，仍可正常发动，
+     * 只是移入 hiddenSkills 记录，供「隐匿状态下可发动的技能」使用。
+     */
+    this.hidden = false;
+    this.hiddenSkills = [];
+    /** 隐匿状态下被隐藏的原始信息 */
+    this.hiddenSnapshot = null;
+
     this.flags = {};          // 回合内标记
     this.storage = {};        // 持久数据
     this.identity = null;     // zhu / zhong / fan / nei
@@ -315,6 +354,15 @@ export class Player {
   /** 到目标的距离 */
   distanceTo(target) {
     if (this === target) return 0;
+    /*
+     * 【调离】：被调离的角色**不参与距离结算**
+     * ----------------------------------------------------------------
+     * 语义：调离者与被调离者之间不存在合法的距离关系，
+     *       返回一个不可达值（99），使攻击范围判断必然失败。
+     * 规则来源：需求方给定（无名杀无此机制，见 mechanics.js 的说明）。
+     */
+    if (isDetached(this) || isDetached(target)) return 99;
+
     const alive = this.game.players.filter((p) => p.alive);
     const i = alive.indexOf(this);
     const j = alive.indexOf(target);
@@ -354,6 +402,14 @@ export class Player {
 
   /* ------------ 基础操作（由 Game 注入 game） ------------ */
   async gain(cards, anim, from) {
+    /*
+     * 【明置】失效
+     * ----------------------------------------------------------------
+     * 被「原牌以外的角色」获得后，失去明置状态。
+     * 自己获得自己的牌（如从木牛流马取回）同样按需求方规则失去明置
+     *（「被放入木牛流马」也算失去），因此这里统一清除。
+     */
+    invalidateRevealed(cards);
     return this.game.playerGain(this, cards, from);
   }
 
@@ -455,6 +511,21 @@ export class Player {
   }
 
   async loseCards(cards, zone) {
+    /*
+     * 【明置】失效
+     * ----------------------------------------------------------------
+     * 需求方确认：被弃置 / 自己使用 / 被暗置 / 被别人获得 /
+     * 被放入木牛流马 / 被除外 —— **都会**失去明置信息。
+     * 这里在「牌离开手牌」的统一入口清除，避免遗漏某条路径。
+     *
+     * 【横置】同理：牌一旦离开手牌，横置状态也就不再有意义
+     *（需求方规则里的横置只在「手牌中」成立）。
+     */
+    invalidateRevealed(cards);
+    for (const c of (cards || [])) {
+      if (c && c.horizontal) delete c.horizontal;
+    }
+
     for (const c of (cards || [])) {
       // 防御：跳过空项（调用方可能传入未找到的牌）
       if (!c) continue;
@@ -485,27 +556,69 @@ export class Player {
   }
 
   async discard(cards) {
-    await this.loseCards(cards);
+    /*
+     * 【横置牌】连带弃置
+     * ----------------------------------------------------------------
+     * 需求方给定：横置的牌被弃置时，**一并弃置手牌中其余的横置牌**。
+     * 必须在真正弃置之前先取出连带部分（否则手牌已变）。
+     */
+    const list = (cards || []).filter(Boolean);
+    const cascaded = [];
+    for (const c of list) {
+      if (!isLinkedCard(c)) continue;
+      const extra = await cascadeDiscardLinked(this, c);
+      cascaded.push(...extra);
+    }
+    const all = list.concat(cascaded);
+
+    await this.loseCards(all);
     /*
      * 弃置不等同于「使用」，因此这些牌**不应进入中央区**。
      * 中央区（处理区）只放「本回合被使用/结算过的牌」，
      * 若把弃牌也塞进去，会出现「弃掉的牌居然出现在中央区」的怪现象
      *（实测【剪辑高手】弃掉的手牌就错误地出现在中央区）。
      */
-    this.game.toDiscard(cards, { direct: true });
-    if (cards.length) this.game.log(`${this.name} 弃置了 ${cards.map((c) => c.text).join('、')}`);
+    this.game.toDiscard(all, { direct: true });
+    if (list.length) this.game.log(`${this.name} 弃置了 ${list.map((c) => c.text).join('、')}`);
   }
 
   async damage(num, source, skill, card) {
     return this.game.doDamage(this, num, source, skill, card);
   }
 
+  /**
+   * 回复体力
+   * ------------------------------------------------------------------
+   * 【溢出体力】机制（本扩新增）：
+   *   若持有该机制（`hpOverflow`），回复的**溢出值将变为等量护甲**。
+   *   例：3/4 体力回复 3 点 → 回到 4/4，溢出的 2 点变成 2 点护甲。
+   *
+   * @param {number} num
+   * @returns {Promise<number>} 实际回复的体力值
+   */
   async recover(num) {
-    if (!this.alive) return;
+    if (!this.alive) return 0;
     const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + num);
-    if (this.hp > before) this.game.log(`${this.name} 回复了 ${this.hp - before} 点体力（${this.hp}/${this.maxHp}）`);
+    const healed = this.hp - before;
+    if (healed > 0) {
+      this.game.log(`${this.name} 回复了 ${healed} 点体力（${this.hp}/${this.maxHp}）`);
+    }
+
+    // 【溢出体力】：把溢出的部分转为护甲
+    const overflow = Math.max(0, num - healed);
+    if (overflow > 0 && this.hpOverflow) {
+      await this.changeHujia(overflow);
+      this.game.log(`${this.name} 的【溢出体力】将 ${overflow} 点溢出回复`
+        + `转为等量护甲（护甲 ${this.hujia}）`);
+    }
+
     this.game.emit();
+    // 【体力变化】记录
+    if (healed > 0 && this.game.noteHpChange) {
+      this.game.noteHpChange(this, 'recover', healed, before);
+    }
+    return healed;
   }
 
   /**
@@ -583,9 +696,14 @@ export class Player {
    */
   async loseHp(num) {
     if (!this.alive) return false;
+    const before = this.hp;
     this.hp -= num;
     this.game.log(`${this.name} 失去了 ${num} 点体力（${this.hp}/${this.maxHp}）`);
     this.game.emit();
+    // 【体力变化】记录（失去体力）
+    if (this.game.noteHpChange) {
+      this.game.noteHpChange(this, 'lose', num, before);
+    }
     if (this.hp <= 0) {
       await this.game.enterDying(this);
       return true;        // 因本次流失体力而濒死
@@ -623,6 +741,11 @@ export class Player {
   }
 
   isDamaged() { return this.hp < this.maxHp; }
+
+  /*
+   * 注意：`getRenku` / `toRenku` 是 **Game 层**的方法
+   *（见下方 export class Game 内），不要在这里重复定义。
+   */
 
   /**
    * 手牌中「不计入手牌上限」的张数
@@ -775,6 +898,27 @@ export class Game {
      */
     this.skillsRef = SKILLS;
 
+    /**
+     * 额定回合 / 轮次
+     * ------------------------------------------------------------------
+     * _turnIsRated：当前回合是否为额定回合（额外回合为 false）
+     * roundCount  ：轮次（1 号位开始新一轮时 +1），供「额定回合」相关技能用
+     */
+    this._turnIsRated = true;
+    this.roundCount = 1;
+
+    /** 【点燃】的弃置计数（每满 2 张结算一次） */
+    this._ignitedDiscardCount = 0;
+
+    /**
+     * 仁区（官方机制）
+     * ------------------------------------------------------------------
+     * 参考无名杀 `_status.renku` / `lib.commonArea.renku`：
+     *   一个存于场上、用于**存放牌的公共区域**，其中的牌对所有角色可见。
+     *   规则：① 至多 6 张；② 超过 6 张时，**最先置入**的牌进入弃牌堆。
+     */
+    this.renku = [];
+
     /* 展示中（瞬时公开，区别于明置） */
     this.showingCards = [];
     this.showingBy = null;
@@ -782,6 +926,34 @@ export class Game {
     /* 事件序列（供「使用/打出」分类与技能时机使用） */
     this.useEvents = [];
   }
+
+  /* ============================================================
+   * 仁区（官方机制）的 Game 层入口
+   * ============================================================
+   * 详见 mechanics.js 的说明。
+   *   规则：① 至多 6 张；② 超出时**最先置入的**进入弃牌堆。
+   */
+  getRenku() { return renkuCards(this); }
+
+  /** 将牌置入仁区（自动处理溢出），返回因溢出而弃置的牌 */
+  async toRenku(cards) { return addToRenku(this, cards); }
+
+  /**
+   * 【体力变化】的统一记录入口
+   * ------------------------------------------------------------------
+   * 供 Player.recover / loseHp / doDamage 等调用。
+   * 五种类型见 mechanics.js 的 HP_CHANGE_KINDS。
+   * 注意「体力值调整 / 转化」**不视为**回复/失去/伤害。
+   */
+  noteHpChange(player, kind, num, before) {
+    return noteHpChange(this, player, kind, num, before);
+  }
+
+  /** 该角色此刻是否不能响应牌（被跳过了「牌的询问」） */
+  cannotRespond(player) { return cannotRespond(player); }
+
+  /** 该角色是否处于隐匿状态 */
+  isHidden(player) { return isHidden(player); }
 
   /* ============================================================
    * 弃牌堆 / 中央区
@@ -839,8 +1011,8 @@ export class Game {
     const input = rest.length
       ? [].concat(cards || [], rest)
       : cards;
-    for (const c of this._asCardList(input)) {
-      if (!c) continue;
+    const list = this._asCardList(input).filter(Boolean);
+    for (const c of list) {
       c.zone = 'discard';
       if (!this.discardPile.includes(c)) this.discardPile.push(c);
       // 若仍在当前回合内，同时保留在中央区直到回合结束
@@ -854,6 +1026,17 @@ export class Game {
       }
     }
     this.emit();
+
+    /*
+     * 【点燃】结算
+     * ----------------------------------------------------------------
+     * 每有两张「被点燃」的牌被弃置，其**原持有者**受到 1 点火焰伤害。
+     * 这里用 fire-and-forget 的方式触发：弃牌入口是同步语义，
+     * 不能阻塞；伤害结算走 doDamage 的异步流程。
+     */
+    if (list.some((c) => isIgnited(c))) {
+      Promise.resolve().then(() => noteIgnitedDiscard(this, list)).catch(() => {});
+    }
   }
 
   /** 归一化：接受 Card、Card[]、null */
@@ -1037,10 +1220,15 @@ export class Game {
   randomPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
   /* ---------------- 牌堆操作 ---------------- */
-  takeFromDeckTop(n) {
+  /**
+   * 从牌堆顶取 n 张
+   * @param {number|boolean} n 数量；传 true 表示「牌堆空时**不要**自动洗牌」
+   *        （供【发现】这类「翻到翻不动为止」的机制使用）
+   */
+  takeFromDeckTop(n, noReshuffle) {
     const out = [];
     for (let i = 0; i < n; i++) {
-      if (!this.deck.length) this.reshuffle();
+      if (!this.deck.length && !noReshuffle) this.reshuffle();
       if (!this.deck.length) break;
       const c = this.deck.pop();
       c.zone = ZONE.FLYING;
@@ -1049,10 +1237,10 @@ export class Game {
     return out;
   }
 
-  takeFromDeckBottom(n) {
+  takeFromDeckBottom(n, noReshuffle) {
     const out = [];
     for (let i = 0; i < n; i++) {
-      if (!this.deck.length) this.reshuffle();
+      if (!this.deck.length && !noReshuffle) this.reshuffle();
       if (!this.deck.length) break;
       const c = this.deck.shift();
       c.zone = ZONE.FLYING;
@@ -1093,13 +1281,23 @@ export class Game {
     const ev = {
       player, card, targets: targets || [], kind: 'use',
     };
-    this.useEvents.push({ ...ev, turn: this.turnCount });
     // 本回合「使用过牌」标记（【无我入春时】给护甲时要用）
     if (player.addFlag) player.addFlag('usedCardThisTurn', 1);
     // 本回合「成为过牌的目标」标记（按每个目标分别记录）
     for (const t of (targets || [])) {
       if (t && t !== player && t.addFlag) t.addFlag('beenTargetedThisTurn', 1);
     }
+
+    /*
+     * 【连招技】
+     * ----------------------------------------------------------------
+     * 必须在把本次使用压入历史**之前**检查，
+     * 否则 getLastUsedCard 取到的就是当前这张牌本身。
+     * 对照无名杀：技能在 useCard 时机用 getHistory("useCard") 的倒数第二条。
+     */
+    await this.checkSkills('comboCheck', ev);
+    this.useEvents.push({ ...ev, turn: this.turnCount });
+
     await this.checkSkills('cardUsed', ev);
     await this.checkSkills('cardUsedOrResponded', ev);
     // 「成为牌的目标」按每个目标分别触发
@@ -1309,6 +1507,26 @@ export class Game {
         try { ok = sk.filter ? sk.filter(ctx) : true; } catch { ok = false; }
         if (!ok) continue;
 
+        /*
+         * ④.5 【连招技】的连续性判定
+         * ----------------------------------------------------------------
+         * 带 comboSkill 标签的技能，要求「连续的两张牌」符合括号内条件。
+         * 判定完全对照无名杀的写法：
+         *   const evt = getLastUsed(player);      // 上一张使用的牌
+         *   if (!evt || !evt.card) return false;
+         *   return <条件(evt.card, event.card)>;
+         * 见 mechanics.js 的 checkCombo / getLastUsedCard。
+         */
+        if (timing === 'comboCheck' || sk.comboSkill) {
+          let comboOk = true;
+          try {
+            comboOk = checkCombo(p, event.card, sk, {
+              game: this, event, timing,
+            });
+          } catch { comboOk = false; }
+          if (!comboOk) continue;
+        }
+
         // ⑤ 询问是否发动
         const willUse = await this.io.askSkill(p, sk, ctx);
         if (willUse) {
@@ -1316,15 +1534,30 @@ export class Game {
           await sk.content(ctx);
           // 昂扬技：发动后进入「已用」状态
           if (sk.angyang) markAngyangUsed(p, sid);
+
+          /*
+           * 【契定技】
+           * ----------------------------------------------------------------
+           * 无名杀原文（`poptip.js` 的 sxrm_qidingSkill）：
+           *   「发动一次后，此技能『契定技』的标签改为『锁定技』
+           *     并删除技能描述中的『可以』。」
+           * 因此发动成功后标记为已契定（此后按锁定技处理）。
+           */
+          if (sk.qidingSkill) markQidingUsed(p, sk);
         }
       }
     }
     // ⑥ 昂扬技重置检查
     //    每个技能时机结算完后，逐角色检查其昂扬技的「激昂」条件；
     //    条件成立且处于已用状态 → 重置（可反复重置多次）。
+    //
+    // ⑦ 韵律技转韵检查
+    //    同一位置检查「转韵」条件；达成则切换韵律技当前生效的选项。
+    //    （与转换技的区别：不是在发动后自动切换，而是靠条件触发）
     for (const p of this.players) {
       if (!p.alive) continue;
       tryResetAngyang(this, p, event);
+      tryZhuanYun(this, p, event);
     }
     this.emit();
   }
@@ -1357,6 +1590,16 @@ export class Game {
    */
   isSkillBlocked(player, skill, event) {
     if (!event) return false;
+    /*
+     * 【跳过技能的询问】：被跳过者**不能封锁触发类技能发动**
+     * ----------------------------------------------------------------
+     * 需求方给定：「技能的询问被跳过，则其不能封锁触发类技能发动」。
+     * 因此「不能发动技能」类机制对这个角色**失效** ——
+     * 他仍然可以正常发动触发技。
+     */
+    if (cannotBlockTriggerSkill(player)) {
+      return false;
+    }
     // 该事件上登记了「不能发动技能」的角色
     if (Array.isArray(event.noTriggerPlayers) && event.noTriggerPlayers.includes(player)) {
       return true;
@@ -1418,12 +1661,15 @@ export class Game {
     return {
       targetConfirm: 1,     // ① 指定目标时 / ③ 指定目标后
       targeted: 2,          // ② 成为目标时
+      comboCheck: 3,        // ★ 连招技：与上一张牌的连续性判定（早于「使用牌时」）
       cardTargeted: 4,      // ④ 成为目标后
       cardUsed: 5,          // ⑤ 使用牌时
       damageBegin: 6,       // ⑥⑦ 造成/受到伤害时
       damageEnd: 8,         // ⑧⑨ 造成/受到伤害后
       cardUsedAfter: 10,    // ⑩ 使用牌后
       cardResolved: 11,     // ⑪ 结算后
+      failedSave: 12,       // ★ 失救时点（濒死结算结束、即将阵亡）
+      hiddenReveal: 13,     // ★ 隐匿登场（触发「隐匿技」的效果）
     };
   }
 
@@ -1465,6 +1711,11 @@ export class Game {
    */
   canBeTargeted(player, card) {
     if (!player || !player.alive || !card) return false;
+    /*
+     * 【调离】：被调离的角色**不能成为牌的目标**
+     * （需求方给定规则；无名杀无此机制）
+     */
+    if (isDetached(player)) return false;
     // 空城：无手牌时不能成为【杀】或【决斗】的目标
     if (player.hasSkill('kongcheng') && player.countCards('h') === 0
       && (card.name === 'sha' || card.name === 'juedou')) return false;
@@ -1608,6 +1859,24 @@ export class Game {
   async doDamage(target, num, source, skill, card, nature = null) {
     if (!target.alive || this.over) return null;
 
+    /*
+     * 【隐匿】「受到伤害时**防止那次伤害**后登场」
+     * ----------------------------------------------------------------
+     * 需求方/无名杀规则：隐匿角色受到伤害时，
+     * **先防止该次伤害**，然后登场（恢复可见）。
+     * 因此这里在伤害结算最前面拦截。
+     */
+    if (isHidden(target)) {
+      this.log(`${target.name} 处于隐匿状态，防止了这次 ${num} 点伤害并登场`);
+      await exitHidden(target);
+      this.emit();
+      // 返回一个「已防止」的事件对象，保持调用方语义一致
+      return {
+        player: target, source, num: 0, prevented: true,
+        hiddenRevealed: true, hpLoss: 0,
+      };
+    }
+
     // 属性来源：显式传入 > 牌的属性 > 无
     const dmgNature = nature || (card && card.nature) || null;
 
@@ -1736,7 +2005,18 @@ export class Game {
     }
     ev.hpLoss = hpLoss;   // 实际扣减的体力（供技能/测试读取）
 
+    /*
+     * 【入魔】的伤害统计
+     * ----------------------------------------------------------------
+     * 规则：「每轮结束时，若本轮你未造成过伤害，你失去 1 点体力。」
+     * 因此只要来源确实造成了伤害（hpLoss>0），就记一笔。
+     */
+    if (source && hpLoss > 0) markMoDamaged(source);
+
+    // 【体力变化】记录（受到伤害）
+    const hpBeforeDamage = target.hp;
     target.hp -= hpLoss;
+    if (hpLoss > 0) noteHpChange(this, target, 'damage', hpLoss, hpBeforeDamage);
     const natureText = dmgNature === 'fire' ? '火焰' : dmgNature === 'thunder' ? '雷电' : '';
     if (hpLoss > 0) {
       this.log(`${target.name} 受到 ${hpLoss} 点${natureText}伤害（${target.hp}/${target.maxHp}）${source ? `，来源：${source.name}` : ''}`);
@@ -2027,6 +2307,14 @@ export class Game {
       const order = [player, ...this.players.filter((p) => p !== player && p.alive)];
       for (const p of order) {
         if (player.hp > 0) break;
+        /*
+         * 【跳过牌的询问】：被跳过者**不能在其他角色求桃时使用牌**
+         * （需求方给定的第二重后果）
+         */
+        if (p !== player && cannotRespond(p)) {
+          this.log(`${p.name} 被跳过了牌的询问，不能在他人求桃时使用牌`);
+          continue;
+        }
         // 找出可用的桃（含急救）
         let taoCards = p.getCards('he', (c) => c.name === 'tao');
         let viaSkill = null;
@@ -2066,6 +2354,24 @@ export class Game {
         break;
       }
       if (!saved) break;
+    }
+
+    /*
+     * 【失救】时点
+     * ----------------------------------------------------------------
+     * 需求方给定：「你的濒死结算结束时你死亡时，此时为失救时点，
+     * 部分技能可能可以恢复体力从而继续游戏。」
+     *
+     * 因此在这里（濒死求桃已走完、确认 hp<=0、**尚未阵亡**）
+     * 触发 failedSave 时机；技能可在此时恢复体力来续命。
+     */
+    if (player.hp <= 0) {
+      const rescued = await triggerFailedSave(this, player);
+      // 被救回则重新走一次濒死确认（体力已 > 0，直接返回）
+      if (rescued && player.hp > 0) {
+        this.emit();
+        return;
+      }
     }
 
     if (player.hp <= 0) await this.killPlayer(player, source);
@@ -2227,15 +2533,71 @@ export class Game {
     const startIdx = this.players.indexOf(lord);
     let guard = 0;
     let step = 0;
+    let ratedDone = 0;              // 本轮已执行的额定回合数
+    const ratedTotal = () => this.players.filter((p) => p.alive).length;
     while (!this.over && guard++ < 500) {
       const p = this.players[(startIdx + step) % this.players.length];
       step++;
       if (!p.alive) continue;
       await this.runTurn(p);
       if (this.over) break;
+
+      /*
+       * 【命运回合】
+       * ----------------------------------------------------------------
+       * 需求方给定：**所有角色的额定回合均执行后**，于**轮次结束前**，
+       * 拥有命运回合的角色**按座次顺序**，每人依次开始一个额外回合。
+       *
+       * 判定：`runTurn` 会把额外回合标记为非额定（_turnIsRated=false），
+       * 因此这里只统计**额定回合**的数量；凑满一轮（= 存活人数）
+       * 之后插入命运回合，再进入下一轮。
+       */
+      if (this._turnIsRated) {
+        ratedDone++;
+        if (ratedDone >= ratedTotal()) {
+          ratedDone = 0;
+
+          /*
+           * 【入魔】每轮结算
+           * ----------------------------------------------------------------
+           * 需求方/无名杀规则：「每轮结束时，若本轮你未造成过伤害，
+           * 你失去 1 点体力。」必须在**开启新一轮之前**结算。
+           */
+          await checkMoRoundEnd(this);
+          if (this.over) break;
+          resetMoRound(this);           // 新一轮重新开始统计伤害
+
+          this.roundCount = (this.roundCount || 1) + 1;
+          await this.runDestinyTurns();
+          if (this.over) break;
+        }
+      }
     }
     if (!this.over) this.endGame('draw', '平局');
     this.emit();
+  }
+
+  /**
+   * 执行本轮所有「命运回合」
+   * ------------------------------------------------------------------
+   * 按**座次顺序**（座位号升序）依次为拥有命运回合的角色
+   * 插入一个额外回合。额外回合不算额定回合。
+   */
+  async runDestinyTurns() {
+    const list = destinyTurnOrder(this);
+    if (!list.length) return [];
+    this.log(`—— 轮次结束前，开始命运回合（${list.map((p) => p.name).join('、')}）——`);
+    this.emit();
+    const done = [];
+    for (const p of list) {
+      if (this.over) break;
+      if (!p.alive || !hasDestinyTurn(p)) continue;
+      // 标记为额外回合 → 不算额定回合
+      p.extraTurn = true;
+      await this.runTurn(p);
+      done.push(p);
+    }
+    return done;
   }
 
   async runTurn(player) {
@@ -2244,11 +2606,50 @@ export class Game {
     this._inCurrentTurn = true;      // 期间弃置的牌保留在中央区
     player.clearFlags();
     player.storage.rendeCount = 0;
-    this.log(`—— ${player.name} 的回合（第 ${this.turnCount} 回合）——`);
+
+    /*
+     * 【额定回合】标记
+     * ----------------------------------------------------------------
+     * 额定回合 = 在没有技能/牌影响下，每轮中该角色原本应执行的那个回合。
+     * 由技能产生的**额外回合**（extraTurn）不算额定回合。
+     *
+     * 同时维护 roundCount（轮次）：从 1 号位开始新的一轮时 +1。
+     */
+    this._turnIsRated = !player.extraTurn;
+    if (player.extraTurn) player.extraTurn = false;   // 额外回合用完即清
+    if (this._turnIsRated && player.id === 0) this.roundCount = (this.roundCount || 1);
+    markRatedTurnStarted(this, player);
+
+    this.log(`—— ${player.name} 的回合（第 ${this.turnCount} 回合）`
+      + `${this._turnIsRated ? '' : '〔额外回合，非额定〕'}——`);
     this.emit();
     await this.io.sleep(300);
 
     await this.checkSkills('turnStart', { player });
+
+    /*
+     * 【隐匿】的「回合开始时登场」
+     * ----------------------------------------------------------------
+     * 需求方/无名杀规则：隐匿角色在其**回合开始时**登场
+     *（另一条路径是「受到伤害时防止该伤害后登场」，见 doDamage）。
+     */
+    if (isHidden(player)) {
+      this.log(`${player.name} 的回合开始，从隐匿状态登场`);
+      await exitHidden(player);
+    }
+
+    /*
+     * 【蓄谋】的准备阶段结算
+     * ----------------------------------------------------------------
+     * 需求方给定：目标的**准备阶段**时，按**后置入先使用**的顺序
+     * 依次使用蓄谋牌；同名牌仅能使用 1 次；
+     * 若某牌不能使用，则弃置所有剩余蓄谋牌。
+     * （本项目把「准备阶段」对应为回合开始时机，先于判定阶段）
+     */
+    if (xumouCardsOf(player).length) {
+      await resolveXumou(this, player);
+      if (!player.alive || this.over) return;
+    }
 
     // 判定阶段
     await this.phaseJudge(player);
@@ -2278,6 +2679,22 @@ export class Game {
      * 这不符合原版规则。
      * ------------------------------------------------------------ */
     this.clearJiu(player, true);
+
+    /*
+     * 【调离】的自动调回
+     * ----------------------------------------------------------------
+     * 需求方给定：**未注明调回时间则默认为当前回合结束后调回**。
+     * 因此在这里统一检查「到期自动调回」。
+     */
+    checkDetachAutoReturn(this);
+
+    /*
+     * 【施法】标记递减
+     * ----------------------------------------------------------------
+     * 需求方给定：发动时获得 X 个同名施法标记，
+     * **每回合结束时移去 1 枚**，数量归零时结算该技能的效果。
+     */
+    await tickShifa(this, player);
 
     // ---- 回合彻底结束：中央区归档进弃牌堆 ----
     // 此后这些牌只能从弃牌堆检索到，中央区不再包含它们。
@@ -2558,6 +2975,15 @@ export class Game {
 
     // ---- 引擎层合法性校验（防止 UI/AI 绕过规则）----
 
+    /*
+     * ⓪【调离】：被调离的角色**不能使用牌**
+     * （需求方给定规则；无名杀无此机制）
+     */
+    if (isDetached(player)) {
+      this.log(`${player.name} 处于调离状态，不能使用牌`);
+      return;
+    }
+
     // ① 已装备的牌不能被再次使用（三国杀原版机制）
     //    装备区的牌只能被弃置/获得，不能作为手牌打出。
     const isEquipped = Object.values(player.equips).some((c) => c === card)
@@ -2584,10 +3010,12 @@ export class Game {
      *     此时不在出牌阶段内，因此不该受次数限制。
      *
      * 另：技能可临时赋予「本回合无次数限制」（如【星火尽染寒】）。
+     *     【点燃】的牌本身也**无次数限制**。
      */
     if (card.name === 'sha') {
+      const ignitedFree = isIgnited(card);      // 【点燃】：无次数限制
       const inMyPlayPhase = this.isInPlayPhase(player);
-      if (inMyPlayPhase) {
+      if (inMyPlayPhase && !ignitedFree) {
         const used = player.flags.usedShaThisTurn || 0;
         const noLimit = this.shaUnlimited(player)
           || (player.flags && player.flags.shaNoLimitThisTurn);
@@ -3088,7 +3516,7 @@ export class Game {
       const realTarget = redir || target;
       if (!realTarget.alive) continue;
 
-      const needShan = this.needShanCount(player);
+      const needShan = this.needShanCount(player, card);
       let dodged = false;
       for (let i = 0; i < needShan; i++) {
         const r = await this.askShan(realTarget, player, card);
@@ -3137,11 +3565,24 @@ export class Game {
     }
   }
 
-  needShanCount(player) {
+  /**
+   * 需要几张【闪】才能抵消这张【杀】
+   * ------------------------------------------------------------------
+   * ① 使用者技能（如【无双】：需要两张【闪】）
+   * ② 牌自身的**附魔**（如把【无双】附魔到这张【杀】上）
+   *
+   * @param {Player} player 使用【杀】的角色
+   * @param {Card} [card] 该【杀】（传入时才会应用附魔）
+   */
+  needShanCount(player, card) {
     let n = 1;
     for (const sid of player.skills) {
       const sk = SKILLS[sid];
       if (sk && sk.mod && sk.mod.shanRequired) n = sk.mod.shanRequired(n);
+    }
+    // 【附魔】：牌上附魔的技能也能改这个数值
+    if (card) {
+      n = applyEnchantMod(card, 'shanRequired', n, SKILLS);
     }
     return n;
   }
@@ -3152,6 +3593,16 @@ export class Game {
   }
 
   async askShan(target, source, card) {
+    /*
+     * 【跳过牌的询问】：对其使用牌其**不可响应**
+     * ----------------------------------------------------------------
+     * 需求方给定：「当角色 A 被跳过了『牌的询问』，则对其使用牌
+     * 其不可响应」。因此这里直接判定为「没有闪」，不发起任何询问。
+     */
+    if (cannotRespond(target)) {
+      this.log(`${target.name} 被跳过了牌的询问，无法响应【${card ? card.fullname : '杀'}】`);
+      return false;
+    }
     // 八卦阵
     const bagua = target.equips.equip2 && CARDS[target.equips.equip2.name].equipSkill === 'bagua_skill';
     if (bagua) {
@@ -3346,10 +3797,18 @@ export class Game {
     const picked = await player.chooseCardFromPlayer(target, 'hej', `顺手牵羊：获得 ${target.name} 的一张牌`);
     if (picked && picked.length) {
       const c = picked[0];
+      /*
+       * 【横置牌】连带获得
+       * ----------------------------------------------------------------
+       * 需求方给定：横置的牌被其他角色获得时，
+       * **一并获得**原持有者手牌中其余的横置牌。
+       * 必须在 loseCards/gain 之前取出连带部分。
+       */
+      const extra = isLinkedCard(c) ? await cascadeGainLinked(player, target, c) : [];
       await target.loseCards(picked);
       // 按无名杀规则：获得的牌一律进入**手牌**，即使是装备牌也不自动装备。
       // 参考 noname card/standard.js shunshou → player.gainPlayerCard() → gain()
-      await player.gain(picked, 'gain2');
+      await player.gain(picked.concat(extra), 'gain2');
       if (c.type === 'equip') {
         this.log(`${player.name} 获得了 ${target.name} 的【${c.fullname}】（进入手牌）`);
       } else {

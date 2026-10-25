@@ -940,35 +940,80 @@ export class UI {
     // 横置状态（铁索连环）
     node.classList.toggle('chained', !!p.isChained);
 
-    // 体力点：数量或状态变化时重建
+    /*
+     * 【隐匿】状态
+     * ------------------------------------------------------------------
+     * 隐匿是「会变化的状态」（受伤/回合开始会登场，之后可能重新隐匿），
+     * 因此这条原地更新路径也必须处理，否则会出现
+     * 「进了隐匿但界面还是旧的」这种不一致。
+     */
+    const hidden = !!p.hidden;
+    node.classList.toggle('is-hidden-player', hidden);
     const avWrap = node.querySelector('.sgs-avatar-wrap');
-    if (avWrap) {
+    const hasHiddenAvatar = !!(avWrap && avWrap.querySelector('.sgs-hidden-avatar'));
+    if (hidden !== hasHiddenAvatar) {
+      // 隐匿状态与当前渲染不符 → 重建该节点（换个头像代价可接受）
+      const parent = node.parentNode;
+      if (parent) {
+        const fresh = this.buildPlayerNode(p, p.isHuman);
+        parent.replaceChild(fresh, node);
+        return;
+      }
+    }
+
+    // 体力点：数量或状态变化时重建
+    const avWrap2 = avWrap;
+    if (avWrap2) {
+      const hp = avWrap2.querySelector('.sgs-hp');
+      if (hidden) {
+        // 隐匿：体力值与上限都不可见 → 只放「体力 ?」占位
+        if (!hp || !hp.querySelector('.sgs-hp-hidden')) {
+          if (hp) hp.remove();
+          const nhp = el('div', 'sgs-hp');
+          nhp.appendChild(el('div', 'sgs-hp-hidden', '体力 ?'));
+          nhp.title = '隐匿状态：体力值与体力上限不可见';
+          avWrap2.appendChild(nhp);
+        }
+      } else {
+        const needRebuild = !hp
+          || !!hp.querySelector('.sgs-hp-hidden')
+          || hp.children.length !== p.maxHp
+          || [...hp.children].some((d, i) => d.classList.contains('on') !== (i < p.hp));
+        if (needRebuild) {
+          if (hp) hp.remove();
+          const nhp = el('div', 'sgs-hp');
+          for (let i = 0; i < p.maxHp; i++) {
+            const d = el('div', 'sgs-hp-dot');
+            d.classList.add(i < p.hp ? 'on' : 'off');
+            nhp.appendChild(d);
+          }
+          avWrap2.appendChild(nhp);
+        }
+      }
+    }
+
+    // 名字（隐匿时显示「未知」）
+    const nameEl = node.querySelector('.sgs-pname');
+    if (nameEl && nameEl.textContent !== p.name) nameEl.textContent = p.name;
+
+    // 徽章行（手牌/装备/判定/蓄谋/隐匿）由下方统一重建，见 badges.dataset.sig
+
+    {
+      const avWrap2b = avWrap;
       // 横置锁链标记：按需增删
-      const hasMark = !!avWrap.querySelector('.sgs-chain-mark');
-      if (p.isChained && !hasMark) {
+      const hasMark = !!(avWrap2b && avWrap2b.querySelector('.sgs-chain-mark'));
+      if (p.isChained && !hasMark && avWrap2b) {
         const chain = el('div', 'sgs-chain-mark');
         chain.innerHTML = '<span class="chain-link">⛓</span>';
         chain.title = '处于横置（连环）状态：受到属性伤害会传导';
-        avWrap.appendChild(chain);
-      } else if (!p.isChained && hasMark) {
-        const m = avWrap.querySelector('.sgs-chain-mark');
+        avWrap2b.appendChild(chain);
+      } else if (!p.isChained && hasMark && avWrap2b) {
+        const m = avWrap2b.querySelector('.sgs-chain-mark');
         if (m) m.remove();
       }
+    }
 
-      const hp = avWrap.querySelector('.sgs-hp');
-      const needRebuild = !hp
-        || hp.children.length !== p.maxHp
-        || [...hp.children].some((d, i) => d.classList.contains('on') !== (i < p.hp));
-      if (needRebuild) {
-        if (hp) hp.remove();
-        const nhp = el('div', 'sgs-hp');
-        for (let i = 0; i < p.maxHp; i++) {
-          const d = el('div', 'sgs-hp-dot');
-          d.classList.add(i < p.hp ? 'on' : 'off');
-          nhp.appendChild(d);
-        }
-        avWrap.appendChild(nhp);
-      }
+    {
 
       // 身份角标
       const idBadge = avWrap.querySelector('.sgs-identity-badge');
@@ -992,17 +1037,31 @@ export class UI {
       parts.push(`手 ${p.hand.length}`);
       if (eqs.length) parts.push(`装 ${eqs.length}`);
       if (p.judges.length) parts.push(`判 ${p.judges.length}`);
+      // 蓄谋 / 隐匿 也要参与签名，否则状态变化时不会重建徽章
+      parts.push(`谋 ${(p.xumou && p.xumou.length) || 0}`);
+      parts.push(`隐 ${p.hidden ? 1 : 0}`);
       const sig = parts.join('|');
       if (badges.dataset.sig !== sig) {
         badges.dataset.sig = sig;
         badges.innerHTML = '';
-        badges.appendChild(el('span', 'sgs-badge', `手 ${p.hand.length}`));
-        if (eqs.length) {
+        // 隐匿角色不显示手牌数等具体信息
+        if (!p.hidden) {
+          badges.appendChild(el('span', 'sgs-badge', `手 ${p.hand.length}`));
+        }
+        if (eqs.length && !p.hidden) {
           badges.appendChild(el('span', 'sgs-badge equip',
             eqs.map((c) => (CARDS[c.name] || {}).label || c.name).join('/')));
         }
         if (p.judges.length) {
           badges.appendChild(el('span', 'sgs-badge judge', `判 ${p.judges.length}`));
+        }
+        // 【蓄谋】：判定区里的蓄谋牌（他人只知道数量）
+        if (p.xumou && p.xumou.length) {
+          badges.appendChild(el('span', 'sgs-badge xumou', `谋 ${p.xumou.length}`));
+        }
+        // 【隐匿】标记
+        if (p.hidden) {
+          badges.appendChild(el('span', 'sgs-badge hidden-badge', '隐匿'));
         }
       }
     }
@@ -1252,6 +1311,90 @@ export class UI {
       }
     }
 
+    /* ---- 明置牌（本扩机制）---- */
+    /*
+     * 需求方要求：查看角色的明置牌走「右键武将查看信息」，
+     * 把当前明置牌的信息放在这里。
+     * 明置是**持续公开**的信息，因此不论谁看都能看到内容。
+     */
+    const revealed = (player.hand || []).filter((c) => c && c.revealed);
+    if (revealed.length) {
+      const list = revealed.map((c) => c.text).join('、');
+      html += `<div class="dp-sec">明置牌（${revealed.length} 张）</div>`
+        + `<div class="dp-desc dp-revealed">${list}</div>`;
+    }
+
+    /* ---- 横置牌（本扩机制）---- */
+    /*
+     * ⚠️ 可见性按需求方裁定：
+     *   横置牌的**内容对他人不可见**（仍属暗置），
+     *   公开的只是「哪张牌被横置了」这一状态。
+     *   因此他人只看数量，主人自己才看内容。
+     *
+     * 另外：一张牌可以**同时**明置与横置（需求方特别提醒），
+     *      两种状态是叠加的，这里各自独立统计。
+     */
+    const horiz = (player.hand || []).filter((c) => c && c.horizontal);
+    if (horiz.length) {
+      const isOwner = me === player;
+      if (isOwner) {
+        const list = horiz.map((c) => `${c.text}${c.revealed ? '（明置）' : ''}`)
+          .join('、');
+        html += `<div class="dp-sec">横置牌（${horiz.length} 张）</div>`
+          + `<div class="dp-desc dp-horizontal">${list}</div>`;
+      } else {
+        // 他人：只知道有几张横置，以及其中几张同时也是明置
+        const alsoRevealed = horiz.filter((c) => c.revealed).length;
+        html += `<div class="dp-sec">横置牌</div>`
+          + `<div class="dp-desc dp-horizontal">`
+          + `共有 ${horiz.length} 张手牌被横置（内容不可见）`
+          + `${alsoRevealed ? `，其中 ${alsoRevealed} 张同时为明置` : ''}`
+          + `</div>`;
+      }
+    }
+
+    /* ---- 蓄谋牌（本扩机制）---- */
+    /*
+     * 需求方裁定：蓄谋牌**只有自己可见内容**，
+     * 其他角色只知道「判定区里有 N 张蓄谋牌」。
+     * 且蓄谋牌**不能被移动**。
+     */
+    const xm = player.xumou || [];
+    if (xm.length) {
+      const isOwner = me === player;
+      if (isOwner) {
+        const list = xm.map((c) => c.text)
+          .join('、');
+        html += `<div class="dp-sec">蓄谋牌（${xm.length} 张）</div>`
+          + `<div class="dp-desc dp-xumou">${list}</div>`
+          + `<div class="dp-hint">按「后置入先使用」在准备阶段依次使用</div>`;
+      } else {
+        html += `<div class="dp-sec">蓄谋牌</div>`
+          + `<div class="dp-desc dp-xumou dim">`
+          + `判定区有 ${xm.length} 张蓄谋牌（内容不可见）</div>`;
+      }
+    }
+
+    /* ---- 隐匿状态 ---- */
+    if (player.hidden) {
+      html += `<div class="dp-sec">隐匿</div>`
+        + `<div class="dp-desc">处于隐匿状态`
+        + `（武将牌、体力值、体力上限、性别均不可见）</div>`;
+    }
+
+    /* ---- 状态：酩酊 ---- */
+    if (player.game && typeof player.game.jiuActive === 'function'
+      && player.game.jiuActive(player)) {
+      html += `<div class="dp-sec">状态</div>`
+        + `<div class="dp-desc">酩酊（使用了【酒】，本回合【杀】伤害 +1）</div>`;
+    }
+
+    /* ---- 命运回合 ---- */
+    if (player.destinyTurn) {
+      html += `<div class="dp-sec">命运回合</div>`
+        + `<div class="dp-desc">拥有命运回合（轮次结束前额外执行一个回合）</div>`;
+    }
+
     /* ---- 判定区 ---- */
     if (player.judges && player.judges.length) {
       const js = player.judges.map((c) => c.fullname).join('、');
@@ -1433,6 +1576,16 @@ export class UI {
     if (!p.alive) node.classList.add('dead');
     if (g.currentPlayer === p) node.classList.add('current-turn');
 
+    /*
+     * 【隐匿】状态
+     * ------------------------------------------------------------------
+     * 需求方给定：隐匿角色**不可见武将牌、体力值、体力上限、性别**。
+     * 因此这里不显示立绘与名字，改用「?」占位，
+     * 体力条也不渲染具体数值。
+     */
+    const hidden = !!p.hidden;
+    if (hidden) node.classList.add('is-hidden-player');
+
     // 右键武将牌 → 角色详情（含除外区等信息）
     node.oncontextmenu = (ev) => {
       ev.preventDefault();
@@ -1441,18 +1594,28 @@ export class UI {
 
     // 头像
     const avWrap = el('div', 'sgs-avatar-wrap');
-    const img = el('img', 'sgs-avatar');
-    img.alt = p.name;
-    bindImageFallback(img, p.charId, p.name, {
-      avatar: true,
-      sex: p.sex === 'male' ? '♂' : '♀',
-    });
-    img.src = charImgPath(p.charId);
-    avWrap.appendChild(img);
+    if (hidden) {
+      // 隐匿：不暴露武将牌
+      const ph = el('div', 'sgs-hidden-avatar', '?');
+      avWrap.appendChild(ph);
+    } else {
+      const img = el('img', 'sgs-avatar');
+      img.alt = p.name;
+      bindImageFallback(img, p.charId, p.name, {
+        avatar: true,
+        sex: p.sex === 'male' ? '♂' : p.sex === 'female' ? '♀' : '无',
+      });
+      img.src = charImgPath(p.charId);
+      avWrap.appendChild(img);
+    }
 
     // 势力
     const grp = GROUPS[p.group];
-    avWrap.appendChild(el('div', 'sgs-group-badge', grp.label)).style.background = grp.color;
+    if (!hidden && grp) {
+      avWrap.appendChild(el('div', 'sgs-group-badge', grp.label)).style.background = grp.color;
+    } else if (hidden) {
+      avWrap.appendChild(el('div', 'sgs-group-badge', '?')).style.background = '#5a5a5a';
+    }
 
     // 座位号（左上角）：绝对座位号，主公固定为 1 号位
     const me = g.players.find((x) => x.isHuman) || g.players[0];
@@ -1497,10 +1660,19 @@ export class UI {
 
     // 体力
     const hp = el('div', 'sgs-hp');
-    for (let i = 0; i < p.maxHp; i++) {
-      const d = el('div', 'sgs-hp-dot');
-      d.classList.add(i < p.hp ? 'on' : 'off');
-      hp.appendChild(d);
+    /*
+     * 【隐匿】：体力值与体力上限均不可见 →
+     * 不渲染具体点数，只给一个「?」占位。
+     */
+    if (hidden) {
+      hp.appendChild(el('div', 'sgs-hp-hidden', '体力 ?'));
+      hp.title = '隐匿状态：体力值与体力上限不可见';
+    } else {
+      for (let i = 0; i < p.maxHp; i++) {
+        const d = el('div', 'sgs-hp-dot');
+        d.classList.add(i < p.hp ? 'on' : 'off');
+        hp.appendChild(d);
+      }
     }
     avWrap.appendChild(hp);
 
@@ -1528,6 +1700,14 @@ export class UI {
     }
     if (p.judges.length) {
       badges.appendChild(el('span', 'sgs-badge judge', `判 ${p.judges.length}`));
+    }
+    // 【蓄谋】：判定区里的蓄谋牌（他人只知道数量）
+    if (p.xumou && p.xumou.length) {
+      badges.appendChild(el('span', 'sgs-badge xumou', `谋 ${p.xumou.length}`));
+    }
+    // 【隐匿】标记
+    if (hidden) {
+      badges.appendChild(el('span', 'sgs-badge hidden-badge', '隐匿'));
     }
     node.appendChild(badges);
 
@@ -1874,6 +2054,24 @@ export class UI {
     face.appendChild(el('div', 'card-back-mark', '谜'));
     node.appendChild(face);
     node.title = '暗置的牌（看不到内容）';
+
+    /*
+     * 【横置牌】的角标要加在**暗置**节点上
+     * ----------------------------------------------------------------
+     * 按需求方裁定：
+     *   横置牌的内容对他人**不可见**（仍属暗置），
+     *   但「这张牌是横置的」这一**状态**是全桌公开的，
+     *   因此【顺手牵羊】时可以明确选中它、却仍不知道具体是什么牌。
+     *
+     * 所以角标必须在这里（隐藏节点）也渲染，否则别人根本
+     * 无从得知哪张牌被横置了。
+     */
+    if (card && card.horizontal) {
+      node.classList.add('is-horizontal');
+      node.title = '暗置的牌（横置，内容不可见）';
+      node.appendChild(el('span', 'sgs-card-tag horizontal', '横置'));
+    }
+
     // 可选性依然保留：能选中但看不到是什么
     if (this.mode === 'cards' && this.cardCandidates
       && this.cardCandidates.includes(card)) {
@@ -1922,6 +2120,20 @@ export class UI {
     };
 
     if (isEquip) node.classList.add('is-equip');
+
+    /*
+     * ---- 本扩机制的可视化标记 ----
+     * 【横置牌】：加角标（需求方确认用角标即可，不旋转）
+     * 【明置牌】：加角标，表示此牌对所有人公开
+     */
+    if (card.horizontal) {
+      node.classList.add('is-horizontal');
+      node.appendChild(el('span', 'sgs-card-tag horizontal', '横置'));
+    }
+    if (card.revealed) {
+      node.classList.add('is-revealed');
+      node.appendChild(el('span', 'sgs-card-tag revealed', '明置'));
+    }
 
     // ---- 可点击状态判定 ----
     // 三种情形：
