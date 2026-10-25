@@ -37,6 +37,13 @@ export const GROUPS = {
    * 与「舟」（再探泰拉）是两个不同的势力，各自有独立标签。
    */
   yue: { key: 'yue', label: '乐', color: '#8f6fb5' },
+  /**
+   * 影（暗影诗篇）
+   * ------------------------------------------------------------------
+   * 「暗影诗篇」包的势力标识。
+   * 与「舟」「乐」并列的第三个扩展势力，各自有独立标签。
+   */
+  ying: { key: 'ying', label: '影', color: '#6b5f8a' },
 };
 
 /**
@@ -65,6 +72,17 @@ export const PACKS = {
     label: '梦想协奏',
     color: '#8f6fb5',
     group: 'yue',
+  },
+  /**
+   * 暗影诗篇
+   * ------------------------------------------------------------------
+   * 璐米欧儿所属的扩展包。势力为「影」。
+   */
+  anying: {
+    key: 'anying',
+    label: '暗影诗篇',
+    color: '#6b5f8a',
+    group: 'ying',
   },
 };
 
@@ -303,6 +321,41 @@ export const CHARACTERS = {
     sex: 'female', group: 'yue', hp: 4,
     pack: 'mengxiang',
     skills: ['qienuodeqinjian', 'qianxingdejuexin'],
+  },
+
+  /* ========================= 暗影诗篇 (1) ========================= */
+  /**
+   * 璐米欧儿 4/4、0 护甲，势力「影」，分类「暗影诗篇」。
+   *
+   * 技能一：金银合纵
+   *   · 出牌阶段限 3 次：弃置 3 张牌，摸「其中花色数」张牌
+   *     （花色数 = 这 3 张牌里**不同花色**的种数，如 ♠♥♦ → 摸 3）。
+   *   · 有**方块牌**进入弃牌堆的回合结束时，你可获得其中 1 张方块牌，
+   *     然后可使用一次上述效果（本回合有过方块牌进弃牌堆即可，
+   *     不看数量；获得与否都不影响这一条成立）。
+   *
+   * 技能二：黑白乱舞
+   *   · 你的 2 张牌被**同时**弃置时，可用其中的牌发动一次『界乱击』。
+   *   · 『界乱击』（详见 skills 里的 luanji_jie）：出牌阶段，可将两张
+   *     手牌当【万箭齐发】使用，**每种花色每回合限一次**；其他角色
+   *     因响应此牌打出【闪】时，其摸一张牌；此牌未造成伤害的，
+   *     结算后你摸等同于目标数的牌。
+   *
+   * 立绘：noname/character/lumioer.png
+   *       （仓库 images/character 下同名文件，见交付说明）
+   */
+  lumioer: {
+    id: 'lumioer', name: '璐米欧儿', title: '金色威严',
+    sex: 'female', group: 'ying', hp: 4,
+    pack: 'anying',
+    /*
+     * 四个技能 id 全部列出（本引擎无 subSkill 派生）：
+     *   jinyinghezong      金银合纵 —— 出牌阶段主动发动
+     *   jinyinghezong_end  金银合纵 —— 回合结束的额外发动（同一技能文案后半句）
+     *   heibailuanwu       黑白乱舞 —— 被同时弃置时提供发动机会
+     *   luanji_jie         界乱击   —— 承接「结算完毕未造成伤害则摸牌」
+     */
+    skills: ['jinyinghezong', 'jinyinghezong_end', 'heibailuanwu', 'luanji_jie'],
   },
 };
 

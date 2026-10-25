@@ -39,6 +39,8 @@ const CHAR_IMAGE_ALIAS = {
   zheya: '折桠',
   // 卡达 → 仓库 images/character/卡达.png（若不存在会自动回退占位图）
   kada: '卡达',
+  // 璐米欧儿 → 仓库 images/character/璐米欧儿.png
+  lumioer: '璐米欧儿',
 };
 
 /** 武将立绘路径（你放置的 PNG；不存在时自动回退到占位图） */

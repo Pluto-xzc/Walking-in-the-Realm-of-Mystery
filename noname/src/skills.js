@@ -6,6 +6,7 @@
  *   table-standard.js   标准武将技（41 个）
  *   table-equip.js      装备技（16 个）
  *   table-expansion.js  本扩武将技（8 个）
+ *   lumioer.js          璐米欧儿：金银合纵 / 黑白乱舞 / 界乱击
  *   beishui.js          背水相关：canBeishuiNow / consumeBeishui / askBeishui / qinjianOptions
  *   qianxing.js         前行的决心：muniuCards / resolveQianxing / noteSuitUsed 等
  *   util.js             skillName
@@ -16,10 +17,11 @@
 import standard from './skills/table-standard.js';
 import equip from './skills/table-equip.js';
 import expansion from './skills/table-expansion.js';
+import lumioer from './skills/lumioer.js';
 
 /* 三张表合成同一个 SKILLS 对象：合并顺序不影响语义（键名互不重叠，
  * 若要排查某技能来自哪张表，看它属于武将技 / 装备技 / 本扩技即可）。 */
-export const SKILLS = { ...standard, ...equip, ...expansion };
+export const SKILLS = { ...standard, ...equip, ...expansion, ...lumioer };
 
 export { canBeishuiNow, consumeBeishui, askBeishui, qinjianOptions } from './skills/beishui.js';
 export { muniuCards, runZhouShiEffect, resolveQianxing, noteSuitUsed } from './skills/qianxing.js';
