@@ -20,6 +20,7 @@
 import { canBeishuiNow, consumeBeishui, qinjianOptions } from '../skills.js';
 import { IDENTITY_COLOR } from '../match.js';
 import { el } from '../ui-helpers.js';
+import { skillUsedUp, markSkillUsed } from '../skills-util.js';
 
 export default {
 
@@ -33,8 +34,7 @@ isSkillUsable(player, skill) {
   if (!g) return false;
   if (!player.alive) return false;
   if (g.currentPlayer !== player) return false;
-  // 每回合限一次
-  if (player.flags['skill_' + skill.id] === g.turnCount) return false;
+  if (skillUsedUp(player, skill, g)) return false;
   // 技能自带 filter
   if (typeof skill.filter === 'function') {
     try {
@@ -50,8 +50,8 @@ async onSkillButtonClick(player, skill) {
   this.skillBusy = true;
   try {
     const g = this.game;
-    // 标记本回合已用
-    player.flags['skill_' + skill.id] = g.turnCount;
+    // 记一次使用次数
+    markSkillUsed(player, skill, g);
     await skill.content({
       player, game: g, event: {}, skill,
       ui: this,
