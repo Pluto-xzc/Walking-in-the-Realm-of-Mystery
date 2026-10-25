@@ -408,6 +408,20 @@ async resolveAoe(player, card, respondName) {
     }
     if (!has) {
       await target.damage(1, player, card.name, card);
+      /*
+       * 记下这张牌造成过的伤害次数。
+       * 【界乱击】收尾要看「此牌有没有造成过伤害」（见 g-play.js
+       * emitCardUsedAfter 的 luanjiAfter 分支），因此必须逐次累加。
+       */
+      if (card) card.luanjiDamaged = (card.luanjiDamaged || 0) + 1;
+    } else if (card && card.luanjiFrom && target !== player) {
+      /*
+       * 【界乱击】「当其他角色打出【闪】响应你使用的【万箭齐发】
+       * 结算结束后，其摸一张牌。」
+       * 注意是**响应者**摸牌，不是使用者。
+       */
+      this.log(`【界乱击】${target.name} 打出【闪】响应，摸一张牌`);
+      await target.draw(1);
     }
   }
 },

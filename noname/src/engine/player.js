@@ -372,7 +372,17 @@ export class Player {
       if (c && c.horizontal) delete c.horizontal;
     }
 
-    for (const c of (cards || [])) {
+    /*
+     * ⚠️ 先做一份快照再遍历。
+     * ----------------------------------------------------------------
+     * 循环体里的 `this.hand.splice()` 会**原地修改** this.hand。
+     * 正常调用时 cards 是另一个数组，改 this.hand 不影响遍历；
+     * 但只要 cards 恰好就是 this.hand 本身（别名调用），
+     * 边遍历边 splice 就会跳过元素 —— 实测 `loseCards(p.hand)` 弃 3 张
+     * 只会去掉 2 张，剩 1 张留在手里。
+     * 用快照遍历可以从根上杜绝这类别名问题。
+     */
+    for (const c of (cards || []).slice()) {
       // 防御：跳过空项（调用方可能传入未找到的牌）
       if (!c) continue;
       const hi = this.hand.indexOf(c);
@@ -410,12 +420,29 @@ export class Player {
      */
     const list = (cards || []).filter(Boolean);
     const cascaded = [];
-    for (const c of list) {
+    for (const c of list.slice()) {
       if (!isLinkedCard(c)) continue;
       const extra = await cascadeDiscardLinked(this, c);
       cascaded.push(...extra);
     }
     const all = list.concat(cascaded);
+
+    /*
+     * 【同一次弃置】的记账
+     * ----------------------------------------------------------------
+     * 璐米欧儿【黑白乱舞】要看「你有 2 张牌**被同时弃置**」。
+     * 判定口径：同一次 `discard()` 调用里带的所有牌就是「同时被弃置」。
+     * 在牌上打一个事务号 + 原主标记：
+     *   _discardBatch  —— 同一批共享同一个号，用于事后成组
+     *   _discardOwner  —— 这批牌原本属于谁（技能归属判定要用）
+     * 连带弃置的横置牌也算进同一批（它们确实是同时被弃的）。
+     */
+    const batchId = (this.game._discardBatchSeq = (this.game._discardBatchSeq || 0) + 1);
+    for (const c of all) {
+      if (!c) continue;
+      c._discardBatch = batchId;
+      c._discardOwner = this;
+    }
 
     await this.loseCards(all);
     /*
@@ -426,6 +453,20 @@ export class Player {
      */
     this.game.toDiscard(all, { direct: true });
     if (list.length) this.game.log(`${this.name} 弃置了 ${list.map((c) => c.text).join('、')}`);
+
+    /*
+     * 弃置完成后的通知（供【黑白乱舞】一类「被弃置时」的技能）
+     * ----------------------------------------------------------------
+     * 「同时弃置」不是回合事件，时机体系里没有对应时点，
+     * 因此由弃置入口**主动通知**，而不是挂在 checkSkills 的时机表上。
+     */
+    if (all.length) {
+      await this.game.checkSkills('cardsDiscarded', {
+        player: this,
+        batch: all,
+        batchId,
+      });
+    }
   }
 
   async damage(num, source, skill, card) {

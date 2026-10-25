@@ -78,6 +78,21 @@ skillScopeMatches(skill, owner, event) {
     case 'drawEnd':
       return event.player === owner;
 
+    /*
+     * 【界乱击】结算完毕 → 归属为**使用者**
+     *（「你使用【万箭齐发】结算结束后」看的是使用者自己）
+     */
+    case 'luanjiAfter':
+      return event.player === owner;
+
+    /*
+     * 有一批牌被弃置 → 归属为**被弃置牌的原主**
+     *（「你有 2 张牌被同时弃置时」）
+     * 同一次弃置动作可能涉及多名角色，故逐张比对而非比对单个 event.player。
+     */
+    case 'cardsDiscarded':
+      return (event.batch || []).some((c) => c && c._discardOwner === owner);
+
     // 询问响应类（护驾/激将/八卦）→ 由 content 内部自行处理
     case 'askForShan':
     case 'askForSha':

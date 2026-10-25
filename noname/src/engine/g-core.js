@@ -107,6 +107,16 @@ toDiscard(cards, ...rest) {
       if (ci >= 0) this.centerZone.splice(ci, 1);
     }
   }
+  /*
+   * 【本回合进入过弃牌堆的牌】
+   * ----------------------------------------------------------------
+   * 供【金银合纵】一类技能查询「本回合有没有某花色的牌进过弃牌堆」。
+   * 记录在 game 上而不是每张牌上：回合结束由 flushCenterZone 一并清空，
+   * 牌被洗回牌堆后也不会留下陈旧标记。
+   */
+  for (const c of list) {
+    if (!this._turnDiscarded.includes(c)) this._turnDiscarded.push(c);
+  }
   this.emit();
 
   /*
@@ -147,7 +157,20 @@ flushCenterZone() {
     c.zone = 'discard';
   }
   this.centerZone = [];
+  // 本回合进入过弃牌堆的记录随之作废（新一轮重新累计）
+  this._turnDiscarded = [];
   this.emit();
+},
+
+/**
+ * 本回合进入过弃牌堆的牌
+ * ------------------------------------------------------------------
+ * @param {string} [suit] 只取该花色（如 'diamond' 取方块）
+ * @returns {Card[]}
+ */
+turnDiscarded(suit) {
+  const all = this._turnDiscarded || [];
+  return suit ? all.filter((c) => c && c.suit === suit) : all.slice();
 },
 
 canSeeCard(card, viewer) {
@@ -228,6 +251,9 @@ setup(playerChars, io, ai) {
   for (const p of this.players) {
     if (p.hasHiddenSkill) enterHidden(p);
   }
+
+  // 【本回合进入过弃牌堆的牌】记账容器，见 toDiscard
+  this._turnDiscarded = [];
 
   this.emit();
 },

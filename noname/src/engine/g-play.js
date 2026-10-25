@@ -255,6 +255,23 @@ async useCard(player, card, targets) {
 },
 
 async emitCardUsedAfter(player, card, targets = []) {
+  /*
+   * 【界乱击】结算完毕
+   * ----------------------------------------------------------------
+   * 璐米欧儿【黑白乱舞】用弃牌发动的那张【万箭齐发】结算结束后：
+   *   · 若此牌**没有造成过伤害** → 使用者摸「目标数」张牌。
+   * 伤害次数由 resolveAoe 写在 card.luanjiDamaged 上（见 g-resolve.js）。
+   * 只在确实出自【界乱击】时才触发（card.luanjiFrom）。
+   */
+  if (card && card.luanjiFrom) {
+    await this.checkSkills('luanjiAfter', {
+      player,
+      card,
+      targets: targets || [],
+      luanjiDamaged: card.luanjiDamaged || 0,
+    });
+  }
+
   await this.checkSkills('cardUsedAfter', {
     player,
     card,
