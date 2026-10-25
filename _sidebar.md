@@ -258,7 +258,7 @@
   - **超越者**
     - [克里萨尔](gamedata/character/klse.md)
   - **龙族**
-    - [相抓津](gamedata/character/xzj.md)
+    - [相枛津](gamedata/character/xzj.md)
     - [璐米欧儿](gamedata/character/lmoe.md)
     - [法露特&米莉亚姆](gamedata/character/flt&mlym.md)
     - [菲琳](gamedata/character/fl.md)
