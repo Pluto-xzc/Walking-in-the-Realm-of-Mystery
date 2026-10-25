@@ -255,7 +255,7 @@ export const CHARACTERS = {
    *       （仓库 images/character/折桠.png 即此图，可压缩后上传）
    */
   zheya: {
-    id: 'zheya', name: '折桠', title: '时间的痕迹',
+    id: 'zheya', name: '折桠', title: '无我入春时',
     sex: 'female', group: 'zhou', hp: 3,
     pack: 'zaitan',
     skills: ['wuworuchunshi', 'xinghuojinranhan'],
@@ -277,7 +277,7 @@ export const CHARACTERS = {
    * 立绘：仓库 images/character/卡达.png（无需另传）
    */
   kada: {
-    id: 'kada', name: '卡达', title: '机械援助',
+    id: 'kada', name: '卡达', title: '剪辑高手',
     sex: 'female', group: 'zhou', hp: 4,
     pack: 'zaitan',
     skills: ['jianjigaoshou', 'tongbusuodigongji'],
@@ -299,7 +299,7 @@ export const CHARACTERS = {
    *   · 乘势：转韵。
    */
   baijinlinzi: {
-    id: 'baijinlinzi', name: '白金磷子', title: '……',
+    id: 'baijinlinzi', name: '白金磷子', title: '梦想协奏',
     sex: 'female', group: 'yue', hp: 4,
     pack: 'mengxiang',
     skills: ['qienuodeqinjian', 'qianxingdejuexin'],

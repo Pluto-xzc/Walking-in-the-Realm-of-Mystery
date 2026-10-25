@@ -9,6 +9,7 @@
 
 import { CARDS, numberLabel, SUITS, EQUIP_SLOTS, EQUIP_SLOT_MAP } from './cards.js';
 import { CHARACTERS, GROUPS, PACKS, packOf, pickerTabs } from './characters.js';
+import * as skillsMod from './skills.js';
 import { SKILLS } from './skills.js';
 import { IDENTITY_LABEL, IDENTITY_COLOR, CHOICE_NUM } from './match.js';
 
@@ -48,7 +49,6 @@ const CHAR_IMAGE_ALIAS = {
   zheya: '折桠',
   // 卡达 → 仓库 images/character/卡达.png（若不存在会自动回退占位图）
   kada: '卡达',
-  baijinlinzi: '白金磷子',
 };
 
 /** 武将立绘路径（你放置的 PNG；不存在时自动回退到占位图） */
@@ -1489,6 +1489,46 @@ export class UI {
     if (me) this.renderEndTurnRow(me);
   }
 
+  /** 供界面判断是否显示「背水」按钮（转发到 skills.js） */
+  canBeishui(player) {
+    return skillsMod.canBeishuiNow(player);
+  }
+
+  /**
+   * 玩家主动按下「背水」按钮
+   * ------------------------------------------------------------------
+   * 消耗掉本次背水机会，并做一次【怯懦的琴键】的全选发动。
+   */
+  async onBeishuiClick(player) {
+    if (this.skillBusy) return;
+    this.skillBusy = true;
+    try {
+      const g = this.game;
+      if (!skillsMod.consumeBeishui) return;
+      skillsMod.consumeBeishui(player);
+      /*
+       * 背水的实质：把【怯懦的琴键】那对转换技的选项**标志**置为
+       * 「本次全选」。因为该技能是锁定技（由 mod.cardEnabled 等
+       * 永续效果驱动，没有 content），所以这里只记录状态，
+       * 真正的效果（摸三张/翻面、重新隐匿）仍由技能自身的
+       * 触发条件驱动。
+       */
+      player.storage = player.storage || {};
+      player.storage.beishuiActive = g.turnCount;
+      const opts = skillsMod.qinjianOptions(player, true);
+      g.log(`${player.name} 主动发动「背水」：`
+        + `【怯懦的琴键】本次全选 ${opts.join('、')}`);
+      this.setPrompt(`已背水：【怯懦的琴键】本次将执行 ${opts.join('、')}`);
+      g.emit();
+    } catch (e) {
+      console.warn('背水发动失败', e);
+      this.setPrompt(`背水发动失败：${e.message}`);
+    } finally {
+      this.skillBusy = false;
+      this.render();
+    }
+  }
+
   /* ============================================================
    * 身份标记（玩家推理用）
    * ============================================================ */
@@ -1832,19 +1872,31 @@ export class UI {
   }
 
   renderSelf(me) {
+    /*
+     * 【隐匿】状态（作用于自己）
+     * ----------------------------------------------------------------
+     * 需求方给定：隐匿角色**武将牌、体力值、体力上限、性别都不可见**。
+     * 这一点对「自己」同样成立 —— 白金磷子当主公时，
+     * 自己的头像区也应显示「?」占位，而不是直接亮出武将牌。
+     */
+    const selfHidden = !!me.hidden;
+
     // 头像
     const av = $('#sgs-self-avatar');
     av.innerHTML = '';
-    // 右键自己的武将牌 → 角色详情（含自己的除外区内容）
     av.oncontextmenu = (ev) => {
       ev.preventDefault();
       this.showPlayerDetail(me, ev);
     };
-    const img = el('img');
-    img.alt = me.name;
-    bindImageFallback(img, me.charId, me.name, { avatar: false });
-    img.src = charImgPath(me.charId);
-    av.appendChild(img);
+    if (selfHidden) {
+      av.appendChild(el('div', 'sgs-self-hidden-avatar', '?'));
+    } else {
+      const img = el('img');
+      img.alt = me.name;
+      bindImageFallback(img, me.charId, me.name, { avatar: false });
+      img.src = charImgPath(me.charId);
+      av.appendChild(img);
+    }
 
     // 名字行：座位号 + 名字 + 势力 + 身份（身份在名字后面）
     const grp = GROUPS[me.group];
@@ -1855,9 +1907,16 @@ export class UI {
     seatSelf.style.opacity = '0.9';
     nameEl.appendChild(seatSelf);
     nameEl.appendChild(document.createTextNode(me.name));
-    const gb = el('span', 'grp', grp.label);
-    gb.style.background = grp.color;
-    nameEl.appendChild(gb);
+    // 隐匿时势力也不该亮出来
+    if (!selfHidden && grp) {
+      const gb = el('span', 'grp', grp.label);
+      gb.style.background = grp.color;
+      nameEl.appendChild(gb);
+    } else if (selfHidden) {
+      const gb = el('span', 'grp', '隐匿');
+      gb.style.background = '#4a4a4a';
+      nameEl.appendChild(gb);
+    }
 
     // 身份单独放（技能按钮要排在身份之后）
     const idEl = $('#sgs-self-identity');
@@ -1874,17 +1933,24 @@ export class UI {
     // ---------------- 体力 / 护甲（文字形式）----------------
     const statEl = $('#sgs-self-stat');
     statEl.innerHTML = '';
-    const hpText = el('span', 'sgs-hp-text');
-    const hpPart = el('span', 'hp-part' + (me.hp <= 1 ? ' low' : ''),
-      `体力：${me.hp}/${me.maxHp}`);
-    hpText.appendChild(hpPart);
-    hpText.appendChild(el('span', 'sep', '｜'));
-    const armor = me.hujia || 0;
-    const armorPart = el('span', 'armor-part' + (armor === 0 ? ' zero' : ''),
-      `护甲：${armor}/${me.maxHujia || armor}`);
-    armorPart.title = '每点护甲可抵挡 1 点伤害，但不影响手牌上限';
-    hpText.appendChild(armorPart);
-    statEl.appendChild(hpText);
+    if (selfHidden) {
+      // 隐匿：体力值与体力上限均不可见
+      const hid = el('span', 'sgs-hp-text sgs-hp-hidden-self', '体力：？｜护甲：？');
+      hid.title = '隐匿状态：体力值与体力上限不可见';
+      statEl.appendChild(hid);
+    } else {
+      const hpText = el('span', 'sgs-hp-text');
+      const hpPart = el('span', 'hp-part' + (me.hp <= 1 ? ' low' : ''),
+        `体力：${me.hp}/${me.maxHp}`);
+      hpText.appendChild(hpPart);
+      hpText.appendChild(el('span', 'sep', '｜'));
+      const armor = me.hujia || 0;
+      const armorPart = el('span', 'armor-part' + (armor === 0 ? ' zero' : ''),
+        `护甲：${armor}/${me.maxHujia || armor}`);
+      armorPart.title = '每点护甲可抵挡 1 点伤害，但不影响手牌上限';
+      hpText.appendChild(armorPart);
+      statEl.appendChild(hpText);
+    }
 
     // ---------------- 技能按钮（可点击发动）----------------
     // 位置：紧跟在身份之后。玩家自己按才发动，不再自动触发。
@@ -1920,6 +1986,27 @@ export class UI {
       };
       sk.appendChild(btn);
     });
+
+    /*
+     * ---------------- 背水按钮 ----------------
+     * 需求方要求：「背水可以加个按钮，让玩家选择是否自行背水」。
+     *
+     * 自己**反面向上**且本次机会还没用掉时，多出一个「背水」按钮。
+     * 按下去＝把【怯懦的琴键】那对转换技 ①② 直接全选执行；
+     * 不按＝按转换技规则只执行当前那一项。
+     *
+     * 该状态由 skills.js 的 canBeishuiNow / consumeBeishui 维护。
+     */
+    if (me.isHuman && this.canBeishui && this.canBeishui(me)) {
+      const bs = el('button', 'sgs-skill-btn sgs-beishui-btn', '背水');
+      bs.title = '你反面向上：可以背水，将【怯懦的琴键】的 ①② 全部执行'
+        + '\n（平常须二选一。这是一次性的机会）';
+      bs.onclick = () => {
+        bs.disabled = true;
+        if (this.onBeishuiClick) this.onBeishuiClick(me);
+      };
+      sk.appendChild(bs);
+    }
 
     // ---------------- 结束回合按钮（武将信息下方）----------------
     this.renderEndTurnRow(me);

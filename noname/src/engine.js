@@ -218,6 +218,18 @@ export class Player {
     this.alive = true;
 
     this.skills = [...ch.skills];
+    /*
+     * 拥有「隐匿技」的角色会在**游戏开始时**进入隐匿状态
+     * ------------------------------------------------------------------
+     * 无名杀依据（library/element/player.js 的 setCharacter）：
+     *   if (info.hasHiddenSkill && !this.noclick) { hidden = true; ... }
+     * 即「有隐匿技 → 开局即隐匿」。
+     *
+     * 这里只做标记，真正的 enterHidden 由 Game.setup / startGame 执行
+     *（那时 game 引用才齐备）。
+     */
+    this.hasHiddenSkill = ch.skills.some(
+      (sid) => SKILLS[sid] && SKILLS[sid].hiddenSkill === true);
     this.hand = [];
     this.equips = makeEmptyEquips();
     /**
@@ -1002,6 +1014,8 @@ export class Game {
       this._deferred = [];
       this._blockSuits = [];
       this._blockLabel = label;
+      // 块序号：供「每次块内各算一次」这类计数使用
+      this._blockSeq = (this._blockSeq || 0) + 1;
       this.log(`—— 「同一结算」开始${label ? `（${label}）` : ''} ——`);
     }
     return this._deferDepth;
@@ -1294,6 +1308,18 @@ export class Game {
       return p;
     });
     this.buildDeck();
+
+    /*
+     * 【隐匿技】游戏开始时进入隐匿
+     * ----------------------------------------------------------------
+     * 需求方给定：**游戏开始时，有隐匿技的角色隐匿**。
+     * 登场时点有二：① 他们自己的回合开始时；② 即将受到伤害时。
+     * （② 在 doDamage 里处理，① 在 runTurn 里处理）
+     */
+    for (const p of this.players) {
+      if (p.hasHiddenSkill) enterHidden(p);
+    }
+
     this.emit();
   }
 

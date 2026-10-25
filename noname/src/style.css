@@ -1440,6 +1440,24 @@ html, body {
 /* 不可用技能仍要看得到（灰态），但不能点 */
 .sgs-skill-btn.trigger-hint { opacity: 0.55; cursor: help; }
 
+/* 「背水」按钮：反面向上时出现，提示这是一次可自行选择的机会 */
+.sgs-skill-btn.sgs-beishui-btn {
+  border-color: rgba(192, 122, 30, 0.85);
+  background: linear-gradient(180deg, rgba(192,122,30,0.42), rgba(192,122,30,0.18));
+  color: #f0c98a;
+  font-weight: 700;
+  letter-spacing: 1px;
+  animation: sgs-beishui-pulse 1.6s ease-in-out infinite;
+}
+.sgs-skill-btn.sgs-beishui-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(224,150,44,0.6), rgba(192,122,30,0.3));
+  color: #fff;
+}
+@keyframes sgs-beishui-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(192,122,30,0.4); }
+  50% { box-shadow: 0 0 14px rgba(232,168,60,0.72); }
+}
+
 /* ==========================================================================
    自己区域的接续信息（判定牌 / 横置 / token）
    ========================================================================== */
@@ -1876,6 +1894,24 @@ html, body {
 }
 .sgs-badge.hidden-badge {
   background: #4a4a4a;
+}
+/* 自己处于隐匿时，头像区与体力也用不可见形式 */
+.sgs-self-hidden-avatar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  color: #6b6255;
+  background: repeating-linear-gradient(
+    45deg, #2a2620, #2a2620 6px, #322d26 6px, #322d26 12px);
+  border: 1px dashed #5a5348;
+  box-sizing: border-box;
+}
+.sgs-hp-hidden-self {
+  color: #6b6255;
+  font-style: italic;
 }
 
 /*
