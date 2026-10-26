@@ -19,8 +19,8 @@
 /* === 依赖（由 tools/fix_ui_imports.cjs 生成）=== */
 import { CHARACTERS, GROUPS, packOf, pickerTabs } from '../characters.js';
 import { SKILLS } from '../skills.js';
-import { IDENTITY_COLOR, IDENTITY_LABEL } from '../match.js';
-import { $, $$, el, charImgPath, resolveHomeHref, charFallbackPath } from '../ui-helpers.js';
+import { IDENTITY_COLOR, IDENTITY_LABEL, CHOICE_NUM } from '../match.js';
+import { $, $$, el, charImgPaths, resolveHomeHref } from '../ui-helpers.js';
 
 export default {
 
@@ -128,9 +128,10 @@ showSplash(stats, onProgress) {
     // 资源预加载：武将图（主图 + 内置占位图）
     const tasks = [];
 
-    // 武将图：优先 PNG，缺失则用内置 SVG
+    // 武将图：按候选链逐个尝试，最后回退内置 SVG
     Object.keys(CHARACTERS).forEach((id) => {
-      tasks.push({ type: 'char', id, url: charImgPath(id), fb: charFallbackPath(id) });
+      const chain = charImgPaths(id);
+      tasks.push({ type: 'char', id, url: chain[0], chain });
     });
 
     const done = { ok: 0, fail: 0, total: tasks.length, cached: 0 };
@@ -202,6 +203,7 @@ showSplash(stats, onProgress) {
       }
       const t = tasks[cursor++];
       const img = new Image();
+      let ci = 0;
       const settle = (ok) => {
         if (ok) done.ok++; else done.fail++;
         updateProgress();
@@ -210,12 +212,10 @@ showSplash(stats, onProgress) {
       };
       img.onload = () => settle(true);
       img.onerror = () => {
-        // 主图缺失：尝试内置占位图，成功则仍计为「可用」
-        if (t.fb && !t._triedFb) {
-          t._triedFb = true;
-          img.onerror = () => settle(false);
-          img.onload = () => settle(true);
-          img.src = t.fb;
+        // 沿候选链继续尝试，全部失败才算缺失
+        ci += 1;
+        if (t.chain && ci < t.chain.length) {
+          img.src = t.chain[ci];
           return;
         }
         settle(false);
@@ -465,7 +465,7 @@ chooseCharacter(charIds, isLord, ctx = {}) {
         const skillList = el('div', 'pick-skill-list');
         ch.skills.forEach((sid) => {
           const s = SKILLS[sid];
-          if (!s) return;
+          if (!s || s.sub) return;
           const row = el('div', 'pick-skill-row');
           const t = el('div', 'pick-skill-title', s.name);
           if (s.locked) t.classList.add('locked');

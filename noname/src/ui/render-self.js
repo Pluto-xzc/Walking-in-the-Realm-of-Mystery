@@ -113,6 +113,8 @@ renderSelf(me) {
   me.skills.forEach((sid) => {
     const s = SKILLS[sid];
     if (!s) return;
+    // 派生技（sub）不单独出按钮，与无名杀 get.is.disable 的判定一致
+    if (s.sub) return;
     const isActive = s.type === 'active' || s.trigger === 'phaseUse';
     const btn = el('button', 'sgs-skill-btn' + (s.locked ? ' locked' : ''),
       s.name);

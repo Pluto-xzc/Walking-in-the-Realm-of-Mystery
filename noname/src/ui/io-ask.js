@@ -4,6 +4,8 @@
  * 本文件只包含方法定义，新增依赖请在文件顶部补 import。
  */
 
+import { SKILLS } from '../skills.js';
+
 export default {
 
 /**

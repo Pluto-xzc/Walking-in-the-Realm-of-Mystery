@@ -112,6 +112,7 @@ showPlayerDetail(player, ev) {
     const list = player.skills
       .map((sid) => SKILLS[sid])
       .filter(Boolean)
+      .filter((s) => !s.sub)
       .map((s) => `<div class="dp-skill"><b>${s.name}</b>`
         + `${s.locked ? '（锁定技）' : ''}：${s.desc || ''}</div>`)
       .join('');
