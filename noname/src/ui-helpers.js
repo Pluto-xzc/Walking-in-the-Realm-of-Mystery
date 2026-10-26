@@ -3,6 +3,8 @@
  * 由 tools/split_ui.cjs 从旧 ui.js 头部切出，供 src/ui/ 下各功能组复用。
  */
 
+import { CHARACTERS } from './characters.js';
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -26,47 +28,67 @@ export function el(tag, cls, html) {
  */
 
 /**
- * 指定立绘的**外部来源**（仓库里已有的图片）
+ * 立绘存放约定（**不需要维护任何对照表**）
  * ------------------------------------------------------------------
- * 站点结构里，仓库根目录下有 images/character/<原名>.png，
- * 里面已经放好了本扩武将的原画，**不需要再往 noname/character/ 传一份**。
- *
- * 这里把「武将 id」映射到「仓库里的文件名」，charImgPath 会优先用它。
- * 网页会自行缩放显示（CSS object-fit: cover），大图也不影响布局。
+ * 站点根目录下有 images/character/<武将中文名>.png，本扩武将的原画都放这里；
+ * 文件名就是武将的 name，例如 折桠.png / 卡达.png / 白金磷子.png / 璐米欧儿.png。
+ * 网页会自行缩放显示（CSS object-fit: cover），大图不影响布局。
  */
-const CHAR_IMAGE_ALIAS = {
-  // 折桠 → 仓库 images/character/折桠.png
-  zheya: '折桠',
-  // 卡达 → 仓库 images/character/卡达.png（若不存在会自动回退占位图）
-  kada: '卡达',
-  // 璐米欧儿 → 仓库 images/character/璐米欧儿.png
-  lumioer: '璐米欧儿',
-};
 
-/** 武将立绘路径（你放置的 PNG；不存在时自动回退到占位图） */
+/**
+ * 站点根前缀
+ * ------------------------------------------------------------------
+ * 页面固定位于 <站点根>/noname/index.html，因此从 location.pathname
+ * 截掉 `/noname/...` 就得到站点根：本地是 `/`，部署在子路径时是 `/repo/`。
+ * 所有资源路径都拼这个前缀，换部署位置不用改代码。
+ */
+export function siteRoot() {
+  const m = location.pathname.match(/^(.*?)\/noname(\/|$)/);
+  return m && m[1] ? `${m[1]}/` : '/';
+}
+
+/** 武将立绘路径（首个候选；不存在时见 bindImageFallback 的逐级回退） */
 export function charImgPath(id) {
-  // ① 优先用「仓库已有图片」的映射（无需另传文件）
-  const alias = CHAR_IMAGE_ALIAS[id];
-  if (alias) {
-    return `/images/character/${encodeURIComponent(alias)}.png`;
-  }
-  // ② 其次用 noname/character/<id>.png（自备立绘时用）
-  return `/noname/character/${id}.png`;
+  return charImgPaths(id)[0];
+}
+
+/**
+ * 武将立绘的**候选路径链**（按优先级）
+ * ------------------------------------------------------------------
+ *   ① images/character/<中文名>.png        ← 本扩武将的原画位置
+ *   ② images/character/<id>.png            ← 英文 id 命名的备用位置
+ *   ③ noname/character/<id>.png            ← 自备立绘
+ *   ④ noname/assets/character/<id>.svg     ← 内置占位图（必定存在）
+ *
+ * 页面按顺序逐个尝试，第一个能加载的就用它 —— 所以无论把原画放在
+ * ①②③ 哪一处，或是干脆不传（走 ④ 占位图），显示都不会坏。
+ * 仓库里 images/character/ 与 noname/ 同级，都在站点根下。
+ */
+export function charImgPaths(id) {
+  const ch = CHARACTERS[id];
+  const name = ch && ch.name;
+  const root = siteRoot();
+  const list = [];
+  if (name && name !== id) list.push(`${root}images/character/${encodeURIComponent(name)}.png`);
+  list.push(`${root}images/character/${encodeURIComponent(id)}.png`);
+  list.push(`${root}noname/character/${id}.png`);
+  list.push(charFallbackPath(id));
+  return [...new Set(list)];
 }
 
 /** 占位立绘路径（仓库内置，必定存在） */
 export function charFallbackPath(id) {
-  return `/noname/assets/character/${id}.svg`;
+  return `${siteRoot()}noname/assets/character/${id}.svg`;
 }
 
 /** 卡牌素材路径 */
 export function cardImagePath(name) {
-  return `/noname/assets/card/${name}.svg`;
+  return `${siteRoot()}noname/assets/card/${name}.svg`;
 }
 
 /** 牌桌背景路径 */
 export function tableBgPath() {
-  return `/noname/assets/background/table.svg`;
+  return `${siteRoot()}noname/assets/background/table.svg`;
 }
 
 /**
@@ -77,33 +99,28 @@ export function tableBgPath() {
  * 兼容部署在子路径（如 /docs/noname/）的情况。
  */
 export function resolveHomeHref() {
-  const m = location.pathname.match(/^(.*?)\/noname(\/|$)/);
-  if (m) {
-    const base = m[1];
-    return base ? base + '/' : '/';
-  }
-  return '../';   // 兜底：退到上一级
+  return siteRoot();
 }
 
 /**
- * 统一的「图片三级回退」绑定
- *   第一级：你放置的 PNG（charImgPath）
- *   第二级：内置 SVG 占位图（charFallbackPath）
- *   第三级：文字块
- *
+ * 统一的「立绘逐级回退」绑定
+ * ------------------------------------------------------------------
+ * 按 charImgPaths 的候选链逐个尝试，全部失败后降级为文字块。
  * 各调用点都使用本函数，避免逻辑分散导致不一致。
  */
 export function bindImageFallback(img, charId, name, opts = {}) {
   const { avatar = false, sex = '' } = opts;
+  const chain = charImgPaths(charId);
+  let idx = 0;
   img.dataset.fallback = '0';
   img.addEventListener('error', function onErr() {
-    const stage = img.dataset.fallback;
-    if (stage === '0') {
-      img.dataset.fallback = '1';
-      img.src = charFallbackPath(charId);
+    idx += 1;
+    if (idx < chain.length) {
+      img.dataset.fallback = String(idx);
+      img.src = chain[idx];
       return;
     }
-    img.dataset.fallback = '2';
+    img.dataset.fallback = 'text';
     img.removeEventListener('error', onErr);
     if (!img.parentNode) return;
     const fb = document.createElement('div');

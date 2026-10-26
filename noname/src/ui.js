@@ -16,6 +16,7 @@
  */
 export {
   charImgPath,
+  charImgPaths,
   charFallbackPath,
   cardImagePath,
   tableBgPath,
