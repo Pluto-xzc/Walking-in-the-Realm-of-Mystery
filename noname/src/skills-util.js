@@ -35,3 +35,16 @@ export function markSkillUsed(player, skill, game) {
   const n = (rec && rec.turn === game.turnCount) ? (rec.n || 0) : 0;
   player.flags[key] = { turn: game.turnCount, n: n + 1 };
 }
+
+/**
+ * 本回合额外增加一次可用次数
+ * ------------------------------------------------------------------
+ * 用于「可用次数 +1」类效果：把本回合已记的次数**退回一次**，
+ * 于是 skillUsedUp 重新变回 false。本回合还没用过时无需处理。
+ */
+export function grantExtraSkillUse(player, skill, game) {
+  if (!player.flags) return;
+  const rec = player.flags['skillUse_' + skill.id];
+  if (!rec || rec.turn !== game.turnCount) return;
+  rec.n = Math.max(0, (rec.n || 0) - 1);
+}
