@@ -4,8 +4,14 @@
  * 由 tools/split_skills.cjs 从旧 skills.js 切出。
  */
 
+import { CARDS } from '../cards.js';
 import { SKILLS } from '../skills.js';
+import { grantExtraSkillUse } from '../skills-util.js';
 import { resolveQianxing, runZhouShiEffect } from './qianxing.js';
+import {
+  SHUANGXING_ITEMS, SHUANGXING_TEXT, shuangxingIndex, shuangxingCandidates,
+  shuangxingPicks, chooseShuangxingName, setShuangxingIndex, advanceShuangxing,
+} from './shuangxing.js';
 
 /* 金银合纵的参数（对象字面量里就会求值，必须声明在 export 之前） */
 /** 出牌阶段的使用次数上限 */
@@ -426,7 +432,118 @@ export default {
     async content(ctx) {
       return resolveLuanjiAfter(ctx.player, ctx.game, ctx.event);
     },
-  }
+  },
+
+  /* ============================ 丰川祥子 ============================ */
+
+  /**
+   * 双星伴生之人（转换技）
+   * ----------------------------------------------------------------
+   * 出牌阶段，你用**一张实体牌**时，可以把这张牌「视为」另一个牌名使用：
+   *   ① 弃牌堆里存在的同类牌
+   *   ② 场上可见牌里没有的同类牌
+   *   ③ 本回合没人使用过的牌名
+   * 用完后当前项推进到下一位（转换技的常规流转，由周始记账）。
+   *
+   * 周始：摸牌至两倍体力上限（至多摸五张），
+   * 然后**下次**发动本技能时转化的牌须非法 —— 必须转化出一张此刻
+   * 用不出来的牌（如【闪】，或已经用满次的【杀】）。那次使用不产生
+   * 任何效果，牌照常进弃牌堆。
+   */
+  shuangxingbansheng: {
+    id: 'shuangxingbansheng', name: '双星伴生之人',
+    desc: '转换技，出牌阶段，你使用牌时，你可以将此牌视为'
+      + '①存在于弃牌堆的同类牌；②不存于场上可见牌的同类牌；'
+      + '③本回合未使用过的牌名 使用。'
+      + '周始：你摸牌至两倍体力上限（至多摸五张），'
+      + '然后下次发动此技能时转化的牌须非法。',
+    type: 'trigger', trigger: 'cardUsed',
+    zhuanhuanji: { options: SHUANGXING_ITEMS },
+    filter(ctx) {
+      const { player, game, event } = ctx;
+      const card = event && event.card;
+      // 只转化「自己出牌阶段使用的实体牌」；虚拟牌不再叠加转化
+      if (!card || card.isVirtual) return false;
+      if (!game.isInPlayPhase(player)) return false;
+      return shuangxingPicks(game, player, card, shuangxingIndex(player)).length > 0;
+    },
+    async content(ctx) {
+      const { player, game, event } = ctx;
+      const card = event.card;
+      const idx = shuangxingIndex(player);
+      const name = await chooseShuangxingName(ctx, card, idx);
+      if (!name) return false;
+      // 只声明「视为哪张牌」，真正的替换由引擎在本次使用收尾时统一做
+      card._convertTo = name;
+      await advanceShuangxing(game, player, idx);
+      return true;
+    },
+    async zhouShi(ctx) {
+      const { player, game } = ctx;
+      const target = 2 * (player.maxHp || 0);
+      const cur = player.countCards('h');
+      const n = Math.min(Math.max(0, target - cur), 5);
+      game.log(`【周始】${player.name} 摸牌至两倍体力上限 ${target} 张`
+        + `（当前 ${cur} 张，至多摸 5 张）`);
+      if (n > 0) await player.draw(n);
+      if (!player.storage) player.storage = {};
+      player.storage.shuangxingIllegalNext = true;
+      game.log(`【周始】${player.name} 下次发动【双星伴生之人】时`
+        + `转化的牌须非法`);
+      game.emit();
+    },
+  },
+
+  /**
+   * 爱恶生死之惑（回合技 = 每回合限一次的主动技）
+   * ----------------------------------------------------------------
+   * 你把一张手牌按【双星伴生之人】的某一项转化后使用，
+   * 然后把【双星伴生之人】的当前项**调整到刚执行的那一项**：
+   *   · 按顺序调整（①→②→③→①）→ 本回合此技能可用次数 +1；
+   *   · 不是按顺序 → 你失去 1 点体力。
+   */
+  aieshengsizhihuo: {
+    id: 'aieshengsizhihuo', name: '爱恶生死之惑',
+    desc: '回合技，你可以执行【双星伴生之人】的对应项'
+      + '（将一张手牌转化为对应的牌使用），然后将当前项向之调整；'
+      + '若按顺序调整，本回合此技能可用次数 +1，否则你失去 1 点体力。',
+    type: 'active', trigger: 'phaseUse', usable: 1,
+    filter(ctx) {
+      const { player, game } = ctx;
+      const hand = player.hand || [];
+      if (!hand.length) return false;
+      // 至少要有一张手牌、至少一项能转化出牌来
+      return hand.some((c) => SHUANGXING_ITEMS.some(
+        (_, i) => shuangxingCandidates(game, player, c, i).length > 0));
+    },
+    async content(ctx) {
+      const { player, game } = ctx;
+      const cur = shuangxingIndex(player);
+
+      // ① 执行哪一项
+      const idx = await chooseExecuteItem(game, player, cur);
+      if (idx === null) return false;
+
+      // ② 拿哪张手牌去转化
+      const cards = await player.chooseCards({
+        prompt: `【爱恶生死之惑】：选择一张手牌，转化为`
+          + `「${SHUANGXING_TEXT[idx]}」的牌使用`,
+        position: 'h', min: 1, max: 1, cancelable: true,
+        filter: (c) => shuangxingPicks(game, player, c, idx).length > 0,
+      });
+      if (!cards || !cards.length) return false;
+      const source = cards[0];
+
+      // ③ 转化成哪张牌
+      const name = await chooseShuangxingName(ctx, source, idx);
+      if (!name) return false;
+
+      // ④ 使用，然后调整当前项
+      await useConvertedCard(game, player, source, name);
+      await adjustShuangxingItem(game, player, cur, idx);
+      return true;
+    },
+  },
 };
 
 /* ==================================================================
@@ -581,4 +698,64 @@ async function askYesNo(game, player, prompt) {
     [{ key: 'yes', label: '发动' }, { key: 'no', label: '不发动' }])
     .catch(() => 'no');
   return r === 'yes';
+}
+
+/* ==================================================================
+ * 丰川祥子：技能实现
+ * ================================================================== */
+
+/** 选要执行【双星伴生之人】的哪一项（AI 固定选下一项，即按顺序走） */
+async function chooseExecuteItem(game, player, cur) {
+  if (!player.isHuman) return (cur + 1) % SHUANGXING_ITEMS.length;
+  const options = SHUANGXING_ITEMS.map((label, i) => ({
+    key: String(i),
+    label: `${label} ${SHUANGXING_TEXT[i]}`,
+  }));
+  options.push({ key: '-1', label: '取消' });
+  const picked = await game.io.chooseOption(player,
+    '【爱恶生死之惑】：执行【双星伴生之人】的哪一项？'
+    + `\n当前项为 ${SHUANGXING_ITEMS[cur]}`, options).catch(() => null);
+  const idx = Number(picked);
+  return Number.isInteger(idx) && idx >= 0 && idx < SHUANGXING_ITEMS.length
+    ? idx : null;
+}
+
+/**
+ * 把一张手牌「视为」另一张牌使用
+ * ------------------------------------------------------------------
+ * 走引擎的 useCard，因此距离、次数、目标合法性、无懈可击等全部照常。
+ */
+async function useConvertedCard(game, player, source, name) {
+  const def = CARDS[name] || {};
+  const ghost = game.makeVirtualCard({
+    name, suit: source.suit, number: source.number, color: source.color,
+  });
+  ghost.sourceCards = [source];
+  ghost.fromAiesheng = true;
+  const fixed = game.defaultTargetsFor(player, ghost);
+  const targets = fixed
+    || await game.pickTargetsForVirtual(player, ghost).catch(() => []);
+  game.log(`【爱恶生死之惑】${player.name} 将 ${source.text} `
+    + `视为【${def.fullname || name}】使用`);
+  await game.useCard(player, ghost, targets);
+}
+
+/**
+ * 把【双星伴生之人】的当前项向刚执行的那一项调整
+ * ------------------------------------------------------------------
+ * 按顺序（①→②→③→①）调整 → 本回合此技能可用次数 +1；
+ * 否则 → 失去 1 点体力。
+ */
+async function adjustShuangxingItem(game, player, from, to) {
+  const inOrder = to === (from + 1) % SHUANGXING_ITEMS.length;
+  await setShuangxingIndex(game, player, to);
+  game.log(`【爱恶生死之惑】当前项 ${SHUANGXING_ITEMS[from]}`
+    + ` → ${SHUANGXING_ITEMS[to]}`);
+  if (inOrder) {
+    grantExtraSkillUse(player, SKILLS.aieshengsizhihuo, game);
+    game.log('【爱恶生死之惑】按顺序调整，本回合此技能可用次数 +1');
+  } else {
+    game.log(`【爱恶生死之惑】未按顺序调整，${player.name} 失去 1 点体力`);
+    await player.loseHp(1);
+  }
 }
