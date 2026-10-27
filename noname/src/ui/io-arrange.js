@@ -138,6 +138,7 @@ chooseAction(player, game) {
 
     const cleanup = () => {
       this.mode = null;
+      this._resumeAction = null;
       this.endTurnResolver = null;
       this.selectedPlayCard = null;
       this.setPrompt('');
@@ -159,6 +160,22 @@ chooseAction(player, game) {
     this.endTurnResolver = () => {
       cleanup();
       resolve({ type: 'end' });
+    };
+
+    /*
+     * 技能结束后「恢复出牌阶段」的钩子
+     * ----------------------------------------------------------------
+     * 玩家点技能按钮时，本函数返回的 Promise 还挂着；技能内部会调用
+     * chooseCards / chooseTargets，把 this.mode 临时改成 'cards'/'targets'。
+     * 技能跑完若没人把 mode 改回 'action'，手牌就点不动、提示也空着，
+     * 表现为「技能发动后卡住」。所以把恢复动作登记在这里，
+     * 由 onSkillButtonClick / onBeishuiClick 的 finally 调用。
+     */
+    this._resumeAction = () => {
+      this.mode = 'action';
+      this.setPrompt('出牌阶段：请选择要使用的牌或技能');
+      this.setPromptSub('点击下方手牌以使用；需要选择目标时按提示点击角色');
+      this.render();
     };
 
     // 渲染结束回合按钮（独立一行）
@@ -198,6 +215,15 @@ chooseAction(player, game) {
 
     // 绑定手牌点击（只响应手牌区，不响应装备区）
     $('#sgs-self-hand').onclick = async (e) => {
+      /*
+       * ⚠️ 只在出牌阶段生效。
+       * 技能询问期间 this.mode 会被改成 'cards'/'targets'，
+       * 此时容器上的本处理器仍然挂着（因为它属于 chooseAction），
+       * 若不拦下来，点手牌既会「选中给技能」又会被当成「使用这张牌」，
+       * 技能的 chooseCards 永远等不到结果 —— 技能就这样卡住了。
+       */
+      if (this.mode !== 'action') return;
+
       const cardNode = e.target.closest('.sgs-card');
       if (!cardNode) return;
       // 装备区在另一个容器里，不会被这里命中；

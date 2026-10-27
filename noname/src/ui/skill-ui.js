@@ -62,7 +62,9 @@ async onSkillButtonClick(player, skill) {
     this.setPrompt(`【${skill.name}】发动失败：${e.message}`);
   } finally {
     this.skillBusy = false;
-    this.render();
+    // 出牌阶段里发动的技能结束后，回到「选牌使用」状态（见 io-arrange 的 _resumeAction）
+    if (typeof this._resumeAction === 'function') this._resumeAction();
+    else this.render();
   }
 },
 
@@ -108,7 +110,8 @@ async onBeishuiClick(player) {
     this.setPrompt(`背水发动失败：${e.message}`);
   } finally {
     this.skillBusy = false;
-    this.render();
+    if (typeof this._resumeAction === 'function') this._resumeAction();
+    else this.render();
   }
 },
 
