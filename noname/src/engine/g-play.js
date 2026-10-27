@@ -33,12 +33,100 @@ async emitCardUsed(player, card, targets = []) {
   this.useEvents.push({ ...ev, turn: this.turnCount });
 
   await this.checkSkills('cardUsed', ev);
+  /*
+   * 转化生效
+   * ----------------------------------------------------------------
+   * 转化技在 `cardUsed` 时机只负责**声明**「这张牌视为哪张牌」
+   *（把目标牌名挂在 `card._convertTo` 上），真正的替换在这里统一做：
+   * 技能不必碰引擎的结算细节，也不会有谁漏改 fullname / type。
+   */
+  this.applyUseConvert(card);
   await this.checkSkills('cardUsedOrResponded', ev);
   // 「成为牌的目标」按每个目标分别触发
   for (const t of (targets || [])) {
     await this.checkSkills('cardTargeted', { player, card, target: t, targets });
   }
   return ev;
+},
+
+/* ============================================================
+ * 转化（「视为使用另一张牌」）
+ * ============================================================ */
+
+/**
+ * 把 `card._convertTo` 声明的转化应用到这张牌上
+ * ------------------------------------------------------------------
+ * 技能只要设置 `card._convertTo = '某牌名'`，这里统一负责：
+ * 记住原牌名（结算后还原）、替换牌名与全部牌面信息。
+ * @returns {boolean} 是否真的发生了转化
+ */
+applyUseConvert(card) {
+  const to = card && card._convertTo;
+  if (!to || to === card.name) return false;
+  const toDef = CARDS[to];
+  if (!toDef) {
+    delete card._convertTo;
+    return false;
+  }
+  card._convertFrom = { name: card.name, fullname: card.fullname };
+  card.name = to;
+  card.fullname = toDef.fullname || to;
+  card.type = toDef.type;
+  card.subtype = toDef.subtype;
+  card.delayed = !!toDef.delayed;
+  delete card._convertTo;
+  this.log(`【转化】${card._convertFrom.fullname} 视为【${card.fullname}】使用`);
+  return true;
+},
+
+/**
+ * 结算结束后把牌名还原
+ * ------------------------------------------------------------------
+ * 被转化使用的**实体牌**还是原来那张（弃牌堆里必须显示原来的牌名），
+ * 所以还原要发生在「本次使用完全结束」之后，由外层 useCard 的 finally 调用。
+ */
+restoreConvertedCard(card) {
+  const from = card && card._convertFrom;
+  if (!from) return;
+  const def = CARDS[from.name] || {};
+  card.name = from.name;
+  card.fullname = from.fullname || from.name;
+  card.type = def.type;
+  card.subtype = def.subtype;
+  card.delayed = !!def.delayed;
+  delete card._convertFrom;
+},
+
+/**
+ * 使用一张牌时「不需要玩家选目标」的情形，直接给出目标
+ * ------------------------------------------------------------------
+ * 技能「视为使用一张牌」时也要走这套判断，因此做成引擎方法共用。
+ * @returns {Player[]|null} null = 需要玩家自己选
+ */
+defaultTargetsFor(player, card) {
+  const def = CARDS[card.name] || {};
+  if (def.type === 'equip') return [];
+  // 只对自己生效
+  if (['tao', 'jiu', 'wuzhong'].includes(card.name)) return [player];
+  // 群体 / 全局 / 延时：使用时不选目标
+  if (['nanman', 'wanjian', 'wugu', 'taoyuan', 'tiesuo', 'shandian']
+    .includes(card.name)) return [];
+  return null;
+},
+
+/**
+ * 转化后重新确定目标
+ * ------------------------------------------------------------------
+ * 转化的牌需要目标、而原来的目标又不适用时（如【桃】转化成了【杀】），
+ * 按新牌重新选一次；不需要目标的牌返回空数组。
+ */
+async retargetAfterConvert(player, card, targets) {
+  const fixed = this.defaultTargetsFor(player, card);
+  if (fixed) return fixed;
+  const ok = (targets || []).filter((t) => t === player
+    || this.canBeTargeted(t, card));
+  if (ok.length) return ok;
+  return this.pickTargetsForVirtual(player, card);
 },
 
 async emitCardResponded(player, card, reason = '') {
@@ -49,8 +137,26 @@ async emitCardResponded(player, card, reason = '') {
   return ev;
 },
 
+/*
+ * 使用一张牌
+ * ==================================================================
+ * 拆成两层：
+ *   useCard      —— 外层壳子，只负责**结算后把被转化的牌复原**；
+ *   useCardCore  —— 真正的使用与结算流程。
+ * 分开的原因：转化技（如【双星伴生之人】）会临时改掉 `card.name`，
+ * 但那张**实体牌**本身没变（它仍然是手牌里那张【桃】），
+ * 所以结算一结束就必须还原，否则牌堆里会留下一张假的【杀】。
+ */
 async useCard(player, card, targets) {
-  const def = CARDS[card.name];
+  try {
+    return await this.useCardCore(player, card, targets);
+  } finally {
+    this.restoreConvertedCard(card);
+  }
+},
+
+async useCardCore(player, card, targets) {
+  let def = CARDS[card.name];
   if (!def) return;
 
   /*
@@ -186,11 +292,39 @@ async useCard(player, card, targets) {
     this.toCenter([card]);
   }
 
-  // 记录出杀次数
-  if (card.name === 'sha') player.addFlag('usedShaThisTurn', (player.flags.usedShaThisTurn || 0) + 1);
-
+  // 记录出杀次数（**转化之后**再记，见下面的⑥）
   await this.emitCardUsed(player, card, targets);
   this.emit();
+
+  /*
+   * ⑥ 转化后的收尾
+   * ----------------------------------------------------------------
+   * 【双星伴生之人】等技能会在 `cardUsed` 时机把这张牌「视为」另一张牌
+   * 使用（转化）。转化会连带改变这张牌的类型、目标与合法性，因此这里
+   * 统一处理三件事：
+   *   1. 刷新 def（类型可能已经从基本牌变成锦囊牌）；
+   *   2. 转化后若**根本无法使用**（需求方所谓「非法」），本次使用不产生
+   *      任何效果，牌直接进弃牌堆；
+   *   3. 需要目标的牌，若原目标不再适用，则按新牌重新选目标。
+   * 外层 useCard 的 finally 负责把牌名还原成实体牌本来的样子。
+   */
+  if (card._convertFrom) {
+    def = CARDS[card.name] || def;
+    if (!this.cardUsableNow(player, card)) {
+      this.log(`【${card.fullname}】当前无法使用，本次使用未产生效果`);
+      this.toDiscard(card.sourceCards && card.sourceCards.length
+        ? card.sourceCards : [card]);
+      this.emit();
+      await this.emitCardUsedAfter(player, card, targets);
+      return;
+    }
+    targets = await this.retargetAfterConvert(player, card, targets);
+  }
+
+  // 记录出杀次数（转化成的【杀】也计入次数）
+  if (card.name === 'sha') {
+    player.addFlag('usedShaThisTurn', (player.flags.usedShaThisTurn || 0) + 1);
+  }
 
   // 无懈可击检查（锦囊）
   if (def.type === 'trick' && !def.respondOnly) {
@@ -325,14 +459,30 @@ cardUsableNow(player, card) {
   if (!card) return false;
   const def = CARDS[card.name];
   if (!def) return false;
+  /*
+   * 只能作为响应使用的牌（【闪】【无懈可击】）永远不算「可用」
+   * ----------------------------------------------------------------
+   * 这里问的是「现在能不能主动使用这张牌」。
+   * 这个判断被三处依赖：【前行的决心】、【剪辑高手】，
+   * 以及转化后「这张牌现在能不能用」的合法性检查。
+   */
+  if (def.respondOnly) return false;
   const alive = this.players.filter((p) => p.alive);
   const others = alive.filter((p) => p !== player);
 
   switch (card.name) {
-    case 'sha':
+    case 'sha': {
+      // 出牌阶段内还要看次数（转化出来的【杀】同样受次数限制）
+      if (this.isInPlayPhase(player) && !isIgnited(card)) {
+        const used = player.flags.usedShaThisTurn || 0;
+        const noLimit = this.shaUnlimited(player)
+          || (player.flags && player.flags.shaNoLimitThisTurn);
+        if (!noLimit && used >= 1) return false;
+      }
       // 需要有攻击范围内的目标（或本回合无距离限制）
       return others.some((p) => this.cardNoDistance(player, card)
         || player.inAttackRange(p));
+    }
     case 'tao':
       return player.hp < player.maxHp || player.hp <= 0;
     case 'juedou':

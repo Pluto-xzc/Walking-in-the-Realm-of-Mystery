@@ -23,8 +23,16 @@ export class Player {
     this.title = ch.title || '';
     this.sex = ch.sex;
     this.group = ch.group;
-    this.maxHp = ch.hp;
-    this.hp = ch.hp;
+    /*
+     * 体力上限 / 初始体力分开
+     * ----------------------------------------------------------------
+     * 对照无名杀的角色信息：`hp` 是**初始体力**，`maxHp` 才是体力上限。
+     * 绝大多数武将两者相同（3/3、4/4），只写 `hp` 即可；
+     * 需要「开局不满血」的（如丰川祥子 4 上限、开局 3 血）才另写 `maxHp`。
+     */
+    const maxHp = typeof ch.maxHp === 'number' ? ch.maxHp : ch.hp;
+    this.maxHp = maxHp;
+    this.hp = Math.min(ch.hp, maxHp);
     this.seat = seat;
     this.isHuman = isHuman;
     this.alive = true;
