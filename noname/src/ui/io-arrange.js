@@ -185,18 +185,32 @@ chooseAction(player, game) {
      * 【重铸】按钮
      * ----------------------------------------------------------------
      * 带 recastable 标记的牌（【铁索连环】【木牛流马】）可以在出牌阶段
-     * 置入弃牌堆并摸一张牌。之前只有引擎支持、没有入口，
-     * 导致玩家「找不到重铸的方式」。
+     * 置入弃牌堆并摸一张牌。
      *
-     * 交互：点一下手牌选中它 → 若该牌可重铸，就出现【重铸】按钮。
+     * 交互：点一下手牌选中它 → 下方出现两个按钮
+     *   「使用【X】」 —— 走正常的使用流程（选目标、结算）
+     *   「重铸【X】」 —— 置入弃牌堆并摸一张牌
+     * ⚠️ 之前这里只给「重铸」，选中后直接 return，导致【铁索连环】
+     *    能重铸却再也用不出去（用户报的 bug）。
      */
-    const renderRecastRow = () => {
+    const renderRecastRow = (card, canUse, onUse) => {
       const row = $('#sgs-recast-row');
       if (!row) return;
-      const sel = this.selectedPlayCard;
-      const def = sel && CARDS[sel.name];
+      const def = card && CARDS[card.name];
       row.innerHTML = '';
-      if (!sel || !def || !def.recastable) return;
+      if (!def || !def.recastable) return;
+
+      if (canUse && typeof onUse === 'function') {
+        const useBtn = el('button', 'sgs-act-btn primary', `使用【${def.fullname}】`);
+        useBtn.title = '按正常流程使用这张牌';
+        useBtn.onclick = async () => {
+          row.innerHTML = '';
+          this.selectedPlayCard = null;
+          await onUse();
+        };
+        row.appendChild(useBtn);
+      }
+
       const btn = el('button', 'sgs-act-btn', `重铸【${def.fullname}】`);
       btn.title = '将此牌置入弃牌堆，然后摸一张牌';
       btn.onclick = async () => {
@@ -204,8 +218,7 @@ chooseAction(player, game) {
         this.selectedPlayCard = null;
         this.render();
         this.setPrompt(`重铸【${def.fullname}】…`);
-        await player.recast([sel]);
-        this.logRecast && this.logRecast();
+        await player.recast([card]);
         this.setPrompt('出牌阶段：请选择要使用的牌或技能');
         this.render();
       };
@@ -231,6 +244,7 @@ chooseAction(player, game) {
       const cid = +cardNode.dataset.cid;
       const card = hand.find((c) => c.id === cid);
       if (!card) return;
+      const g = game || this.game;
 
       // 双重保险：已装备的牌不允许使用
       if (Object.values(player.equips).some((c) => c === card)) {
@@ -239,106 +253,104 @@ chooseAction(player, game) {
         return;
       }
 
-      // 检查是否可用
-      const check = this.checkCardUsable(player, card, game);
-      if (!check.ok) {
-        /*
-         * 不可用，但如果这张牌**可重铸**，就给出重铸入口，
-         * 而不是只弹一句「不能用」——玩家否则会找不到重铸方式。
-         */
-        const cdef = CARDS[card.name];
-        if (cdef && cdef.recastable) {
-          this.selectedPlayCard = card;
-          renderRecastRow();
-          this.setPrompt(`【${cdef.fullname}】${check.reason}；`
-            + `但你可以把它重铸（置入弃牌堆并摸一张牌）`);
-          return;
-        }
-        this.setPrompt(check.reason);
-        setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
-        return;
-      }
-
-      // 可重铸的牌：单击先选中，给出「使用 / 重铸」两个选择
-      const cdef2 = CARDS[card.name];
-      if (cdef2 && cdef2.recastable) {
-        this.selectedPlayCard = card;
-        renderRecastRow();
-        this.setPrompt(`已选中【${cdef2.fullname}】：可正常使用，`
-          + `或点下方【重铸】置换一张牌`);
-        return;
-      }
-
-      /*
-       * 统一过滤候选目标
-       * ----------------------------------------------------------------
-       * 技能可以通过 mod.targetLimit 收窄「谁能成为目标」
-       *（如折桠【星火尽染寒】：本回合只能指定手牌数或体力不小于你的角色）。
-       *
-       * ⚠️ 必须在**弹出选择界面之前**就过滤掉，
-       *    否则会出现「先让你选中、点了确定才被引擎弹回来」的糟糕体验。
+      /**
+       * 正常使用流程：可用性检查 → 选目标 → 交出结果。
+       * 抽成函数，好让「使用【X】」按钮复用。
        */
-      if (check.needTargets && check.needTargets.length) {
-        const legal = check.needTargets.filter(
-          (t) => t === player || game.canTargetByLimits(player, t, card),
-        );
-        if (!legal.length) {
-          this.setPrompt(`没有符合条件的目标（本回合的目标限制）`);
+      const proceed = async () => {
+        // 检查是否可用
+        const check = this.checkCardUsable(player, card, g);
+        if (!check.ok) {
+          this.setPrompt(check.reason);
           setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
           return;
         }
-        check.needTargets = legal;
-        // 候选被收窄后，最小目标数也要跟着调整
-        if (check.targetMin > legal.length) check.targetMin = legal.length;
-      }
 
-      let targets = [];
-
-      // ---- 自动指定目标（桃/无中生有/闪电等只对自己）----
-      if (check.autoTargets && check.autoTargets.length) {
-        targets = check.autoTargets.slice();
-      } else if (check.needTargets && check.needTargets.length) {
-        // ---- 需要玩家点选目标 ----
-        const picked = await this.chooseTargets(player, {
-          prompt: check.targetPrompt || `【${(CARDS[card.name] || {}).fullname}】请选择目标`,
-          candidates: check.needTargets,
-          min: check.targetMin || 1,
-          max: check.targetMax || 1,
-          card,          // 传入牌，供 chooseTargets 应用目标限制
-        });
-        if (!picked || !picked.length) {
-          // 玩家取消 → 回到出牌阶段，不消耗这张牌
-          this.setPrompt('已取消，请重新选择要使用的牌');
-          setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1400);
-          return;
-        }
-        targets = picked;
-
-        // 借刀杀人：需要第二个目标（其攻击范围内的角色）
-        if (check.needSecond) {
-          const holder = picked[0];
-          const victims = game.players.filter(
-            (p) => p.alive && p !== holder && p !== player && holder.inAttackRange(p),
+        /*
+         * 统一过滤候选目标
+         * ----------------------------------------------------------------
+         * 技能可以通过 mod.targetLimit 收窄「谁能成为目标」
+         *（如折桠【星火尽染寒】：本回合只能指定手牌数或体力不小于你的角色）。
+         *
+         * ⚠️ 必须在**弹出选择界面之前**就过滤掉，
+         *    否则会出现「先让你选中、点了确定才被引擎弹回来」的糟糕体验。
+         */
+        if (check.needTargets && check.needTargets.length) {
+          const legal = check.needTargets.filter(
+            (t) => t === player || g.canTargetByLimits(player, t, card),
           );
-          if (victims.length) {
-            const v = await this.chooseTargets(player, {
-              prompt: `【借刀杀人】请选择 ${holder.name} 攻击范围内的目标`,
-              candidates: victims,
-              min: 1,
-              max: 1,
-            });
-            if (v && v.length) targets.push(v[0]);
+          if (!legal.length) {
+            this.setPrompt(`没有符合条件的目标（本回合的目标限制）`);
+            setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1600);
+            return;
           }
-          if (targets.length < 2) {
+          check.needTargets = legal;
+          // 候选被收窄后，最小目标数也要跟着调整
+          if (check.targetMin > legal.length) check.targetMin = legal.length;
+        }
+
+        let targets = [];
+
+        // ---- 自动指定目标（桃/无中生有/闪电等只对自己）----
+        if (check.autoTargets && check.autoTargets.length) {
+          targets = check.autoTargets.slice();
+        } else if (check.needTargets && check.needTargets.length) {
+          // ---- 需要玩家点选目标 ----
+          const picked = await this.chooseTargets(player, {
+            prompt: check.targetPrompt || `【${(CARDS[card.name] || {}).fullname}】请选择目标`,
+            candidates: check.needTargets,
+            min: check.targetMin || 1,
+            max: check.targetMax || 1,
+            card,          // 传入牌，供 chooseTargets 应用目标限制
+          });
+          if (!picked || !picked.length) {
+            // 玩家取消 → 回到出牌阶段，不消耗这张牌
             this.setPrompt('已取消，请重新选择要使用的牌');
             setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1400);
             return;
           }
+          targets = picked;
+
+          // 借刀杀人：需要第二个目标（其攻击范围内的角色）
+          if (check.needSecond) {
+            const holder = picked[0];
+            const victims = g.players.filter(
+              (p) => p.alive && p !== holder && p !== player && holder.inAttackRange(p),
+            );
+            if (victims.length) {
+              const v = await this.chooseTargets(player, {
+                prompt: `【借刀杀人】请选择 ${holder.name} 攻击范围内的目标`,
+                candidates: victims,
+                min: 1,
+                max: 1,
+              });
+              if (v && v.length) targets.push(v[0]);
+            }
+            if (targets.length < 2) {
+              this.setPrompt('已取消，请重新选择要使用的牌');
+              setTimeout(() => this.setPrompt('出牌阶段：请选择要使用的牌或技能'), 1400);
+              return;
+            }
+          }
         }
+
+        cleanup();
+        resolve({ type: 'use', card, targets });
+      };
+
+      // 可重铸的牌：单击选中，给出「使用 / 重铸」两个按钮
+      const cdef = CARDS[card.name];
+      if (cdef && cdef.recastable) {
+        const usable = this.checkCardUsable(player, card, g);
+        this.selectedPlayCard = card;
+        renderRecastRow(card, !!usable.ok, proceed);
+        this.setPrompt(usable.ok
+          ? `已选中【${cdef.fullname}】：点【使用】正常使用，或点【重铸】置换一张牌`
+          : `【${cdef.fullname}】${usable.reason}；可以点【重铸】置换一张牌`);
+        return;
       }
 
-      cleanup();
-      resolve({ type: 'use', card, targets });
+      await proceed();
     };
   });
 },
