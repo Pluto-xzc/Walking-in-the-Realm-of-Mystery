@@ -24,6 +24,7 @@
  *   · yunlv.js     AE–AF 韵律技 / 溢出体力
  *   · convert.js   AG–AI 转化 / 周始 / 阵法技
  *   · occupy.js    AJ–AK 智囊牌 / 占用
+ *   · change.js    AL     一次性变动拦截（破惘长行）
  *
  * 注意：这些子文件彼此无静态依赖，也不 import 任何其它模块 —— 所有依赖
  * （game / player / CARDS / SKILLS）都由调用方以参数传入。
@@ -41,6 +42,7 @@ export * from './mechanics/xumou.js';
 export * from './mechanics/yunlv.js';
 export * from './mechanics/convert.js';
 export * from './mechanics/occupy.js';
+export * from './mechanics/change.js';
 
 /*
  * default 导出：历史上 mechanics.js 的默认导出是一个包含全部函数的大对象，

@@ -301,6 +301,27 @@ export const CHARACTERS = {
     skills: ['jianjigaoshou', 'tongbusuodigongji'],
   },
 
+  /**
+   * 赤刃明霄陈 3/3、0 护甲，势力「舟」，分类「再探泰拉」，称号「天喟」。
+   *
+   * 技能：
+   *   破惘长行 —— 有角色的体力/手牌要一次性变动大于 1 时，
+   *     可蓄谋 1 张手牌（体力变动）/ 使用 1 张蓄谋牌（手牌变动），
+   *     令该次结算中大于 1 的每个变动分别变为 ±1。
+   *     （拦截点在引擎动作原语，见 src/mechanics/change.js）
+   *
+   *   修己 —— 回合技。有伤害造成的结算中，可将该伤害结算改为
+   *     对结算中所有参与者发动一次『业炎』（以 4 次判定部分代替弃牌）。
+   *
+   * 立绘：仓库 images/character/赤刃明霄陈.png（按名字自动匹配，无需另配）
+   */
+  chirenmingxiaochen: {
+    id: 'chirenmingxiaochen', name: '赤刃明霄陈', title: '天喟',
+    sex: 'female', group: 'zhou', hp: 3, maxHp: 3,
+    pack: 'zaitan',
+    skills: ['powangchangxing', 'xiuji'],
+  },
+
   /* ========================= 梦想协奏 (2) ========================= */
   /**
    * 白金磷子 4/4、0 护甲，势力「乐」，分类「梦想协奏」。
