@@ -130,13 +130,13 @@ export async function resolveXumou(game, player) {
     // ② 询问是否使用（不能使用则弃置所有剩余）
     const usable = game.cardUsableNow(player, card);
     let willUse = usable;
-    if (usable && player.isHuman && game.io && game.io.askSkill) {
+    if (usable && player.isHuman && game.io) {
       // 人类玩家：询问是否使用
-      willUse = await game.io.chooseOption({
+      willUse = await player.chooseOption({
         prompt: `蓄谋：是否使用【${card.fullname || name}】？`
           + `若不使用，则判定区内所有蓄谋牌都将被置入弃牌堆。`,
-        options: ['使用', '不使用'],
-      }).then((r) => r !== '不使用').catch(() => true);
+        options: [{ key: 'use', label: '使用' }, { key: 'skip', label: '不使用' }],
+      }).then((r) => r === 'use' || r === true).catch(() => true);
     }
     if (!willUse) {
       game.log(`【蓄谋】${card.fullname || name} 无法使用（或选择不使用），`
