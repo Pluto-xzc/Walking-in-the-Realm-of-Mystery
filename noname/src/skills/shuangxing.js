@@ -12,6 +12,9 @@
  *
  * 「同类牌」= 与被转化的那张牌**同一个大类**。需求方补充说明
  * 「基本牌、锦囊牌、装备牌」，因此大类只有这三种。
+ *
+ * ⚠️ ③ 是例外：它不要求同类，而是拿**任意手牌**去印一张本回合
+ * 没用过的**即时牌**（基本牌 + 即时锦囊；延时锦囊与装备不能被印出）。
  */
 
 import { CARDS } from '../cards.js';
@@ -30,6 +33,25 @@ export const SHUANGXING_TEXT = [
 
 /** 技能 id（多处引用，抽成常量避免手打错） */
 const SKILL_ID = 'shuangxingbansheng';
+
+/**
+ * ③ 能「印」出来的牌名池：**全部即时牌**
+ * ------------------------------------------------------------------
+ * 基本牌（杀/闪/桃/酒）+ 即时锦囊（无中生有、过河拆桥、决斗…）。
+ * 延时锦囊（乐不思蜀/闪电/兵粮寸断）与装备牌**不能**被印出来，
+ * 但它们本身可以作为转化素材（用任意手牌去印）。
+ */
+function instantNames() {
+  const out = [];
+  for (const [name, def] of Object.entries(CARDS)) {
+    if (!def || typeof def !== 'object') continue;
+    if (def.type === 'equip') continue;
+    if (def.type === 'trick' && def.delayed) continue;
+    if (def.type !== 'basic' && def.type !== 'trick') continue;
+    out.push(name);
+  }
+  return out;
+}
 
 /** 转换技当前项（0 / 1 / 2） */
 export function shuangxingIndex(player) {
@@ -81,18 +103,33 @@ function probeCard(source, targetName) {
  * @returns {string[]} 可选的牌名（可能是空数组）
  */
 export function shuangxingCandidates(game, player, source, itemIndex) {
+  const used = namesUsedThisTurn(game);
+  const out = [];
+
+  /*
+   * ③ 与前两项的规则不同：
+   *   前两项要求「同类牌」（基本/锦囊/装备三大类互不相通），
+   *   ③ 则是拿**任意**一张手牌去印一张本回合没用过的**即时牌**，
+   *   范围是全部基本牌 + 即时锦囊（延时锦囊、装备牌印不出来）。
+   */
+  if (itemIndex === 2) {
+    for (const name of instantNames()) {
+      if (name === source.name) continue;
+      if (used.has(name)) continue;
+      out.push(name);
+    }
+    return out;
+  }
+
   const cat = bigTypeOf(source.name);
   const discard = new Set((game.discardPile || []).map((c) => c && c.name));
   const visible = visibleCardNames(game);
-  const used = namesUsedThisTurn(game);
 
-  const out = [];
   for (const name of Object.keys(CARDS)) {
     if (name === source.name) continue;
     if (bigTypeOf(name) !== cat) continue;
     if (itemIndex === 0 && !discard.has(name)) continue;
     if (itemIndex === 1 && visible.has(name)) continue;
-    if (itemIndex === 2 && used.has(name)) continue;
     out.push(name);
   }
   return out;
