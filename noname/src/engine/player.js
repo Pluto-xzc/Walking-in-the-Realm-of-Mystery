@@ -11,6 +11,7 @@ import {
   invalidateRevealed, isLinkedCard, cascadeDiscardLinked, cascadeGainLinked,
   isIgnited, noteIgnitedDiscard, applyEnchantMod, noteHpChange, cannotRespond,
   isInquirySkipped, SKIP_KINDS, OCCUPY_ZONES, occupierOf, isDetached,
+  adjustBigChange,
 } from '../mechanics.js';
 import { nextId, ZONE } from './zones.js';
 
@@ -240,7 +241,69 @@ export class Player {
     return Math.max(1, d);
   }
 
-  inAttackRange(target) { return this.distanceTo(target) <= this.attackRange(); }
+  /** 单侧攻击范围的方向（仅【无穷之锁】有意义） */
+  rangeSide() {
+    const s = this.storage && this.storage.attackSide;
+    return s === 'right' ? 'right' : 'left';
+  }
+
+  /**
+   * 单侧攻击范围的判定（【无穷之锁】）
+   * ------------------------------------------------------------------
+   * ① 选定侧的「范围值」= 攻击范围；**未选侧的范围为 0**。
+   * ② 【-1马】让两个方向的距离都 -1，所以未选侧紧邻那位也会被拉进来
+   *    （例：A B C 你 D E F —— 左1 无马只覆盖 C；左1 有 -1马 覆盖 B、C、D）。
+   * ③ 武器给的范围允许绕圈找人，技能声明的范围不允许。
+   */
+  /**
+   * 单侧攻击范围：范围内的角色
+   * ------------------------------------------------------------------
+   * 规则（需求方给定）：
+   *   ① 范围是**单点**「从你手边数第 X 个角色」，X = 范围值。
+   *   ② 【-1马】把这个单点向两侧各扩 1 格（第 0 个 = 未选侧紧邻那位）。
+   *      例：A B C 你 D E F —— 左1 无马 = C；左1 有 -1马 = B、C、D。
+   *   ③ 武器给的范围允许绕圈找人；技能自己声明的范围不允许。
+   */
+  inSideRange(target, side = this.rangeSide()) {
+    if (this === target) return false;
+    const alive = this.game.players.filter((p) => p.alive);
+    const n = alive.length;
+    const me = alive.indexOf(this);
+    const idx = alive.indexOf(target);
+    if (me < 0 || idx < 0) return false;
+    const step = side === 'left' ? (me - idx + n) % n : (idx - me + n) % n;
+    const i = step === n - 1 ? 0 : step;          // 第 0 个 = 未选侧紧邻
+    return Math.abs(i - this.rangeValueX(n)) <= this.horseDistanceBonus();
+  }
+
+  /** 单侧范围内（某一侧）的存活角色 */
+  sideRangeTargets(side = this.rangeSide()) {
+    return this.game.players.filter((p) => p.alive && this.inSideRange(p, side));
+  }
+
+  /** 当前范围值 X（技能声明优先，否则取武器；不可绕圈的声明超界时返回 -1） */
+  rangeValueX(n) {
+    const declared = this.storage && this.storage.rangeX;
+    if (Number.isFinite(declared) && declared > 0) {
+      return declared <= n - 2 ? declared : -1;
+    }
+    const x = Math.max(1, this.attackRange());
+    const m = n - 1;
+    if (x <= n - 2 || m <= 1) return x;
+    const k = ((x - 1) % m) + 1;                  // 武器绕圈
+    return k === m ? 0 : k;
+  }
+
+  /** 【-1 马】给的距离减免（没有则 0） */
+  horseDistanceBonus() {
+    const h = this.equips && this.equips.equip4;
+    return h && CARDS[h.name] && CARDS[h.name].distanceFrom ? 1 : 0;
+  }
+
+  inAttackRange(target) {
+    if (this.hasSkill('wuqiongzhisuo')) return this.inSideRange(target);
+    return this.distanceTo(target) <= this.attackRange();
+  }
 
   canUseAsShan() {
     return this.countCards('h', (c) => c.name === 'shan') > 0;
@@ -267,7 +330,28 @@ export class Player {
     return this.game.playerGain(this, cards, from);
   }
 
+  /** 【破惘长行】把「摸牌」反向改成「弃 1 张手牌」 */
+  async discardOneByChange() {
+    if (!this.hand.length) return null;
+    const got = await this.chooseCards({
+      prompt: '【破惘长行】：弃置 1 张手牌',
+      position: 'h', min: 1, max: 1, cancelable: false,
+    }).catch(() => null);
+    const card = (got || [])[0] || this.hand[0];
+    await this.discard([card]);
+    return card;
+  }
+
   async draw(n) {
+    // 【破惘长行】一次性摸多张可由技能改为「摸 1」或「反向弃 1」
+    if (n > 1) {
+      const nd = await adjustBigChange(this.game, 'hand', n);
+      if (nd < 0) {
+        await this.discardOneByChange();
+        return [];
+      }
+      n = nd;
+    }
     const cards = this.game.takeFromDeckTop(n);
     await this.gain(cards, 'draw');
     this.game.log(`${this.name} 摸了 ${cards.length} 张牌`);
@@ -421,12 +505,23 @@ export class Player {
 
   async discard(cards) {
     /*
+     * 【破惘长行】一次性弃置多张时，可由技能改为
+     *   · 只弃 1 张（-1）
+     *   · 反向：改为摸 1 张（+1）
+     */
+    let picked = (cards || []).filter(Boolean);
+    if (picked.length > 1) {
+      const nd = await adjustBigChange(this.game, 'hand', -picked.length);
+      if (nd > 0) { await this.draw(nd); return; }
+      picked = picked.slice(0, -nd);
+    }
+    /*
      * 【横置牌】连带弃置
      * ----------------------------------------------------------------
      * 需求方给定：横置的牌被弃置时，**一并弃置手牌中其余的横置牌**。
      * 必须在真正弃置之前先取出连带部分（否则手牌已变）。
      */
-    const list = (cards || []).filter(Boolean);
+    const list = picked;
     const cascaded = [];
     for (const c of list.slice()) {
       if (!isLinkedCard(c)) continue;
@@ -493,6 +588,12 @@ export class Player {
    */
   async recover(num) {
     if (!this.alive) return 0;
+    // 【破惘长行】一次性变动大于 1 时可由技能改为 ±1
+    if (num > 1) {
+      const nd = await adjustBigChange(this.game, 'hp', num);
+      if (nd < 0) { await this.loseHp(-nd); return 0; }
+      num = nd;
+    }
     const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + num);
     const healed = this.hp - before;
@@ -591,6 +692,21 @@ export class Player {
    */
   async loseHp(num) {
     if (!this.alive) return false;
+    // 【破惘长行】一次性变动大于 1 时可由技能改为 ±1
+    if (num > 1) {
+      const nd = await adjustBigChange(this.game, 'hp', -num);
+      if (nd > 0) {
+        // 反向（把流失改成回复）不能突破体力上限
+        if (this.hp >= this.maxHp) {
+          this.game.log(`【破惘长行】${this.name} 已到体力上限`
+            + `（${this.hp}/${this.maxHp}），本次回复实际为 0`);
+        } else {
+          await this.recover(nd);
+        }
+        return false;
+      }
+      num = -nd;
+    }
     const before = this.hp;
     this.hp -= num;
     this.game.log(`${this.name} 失去了 ${num} 点体力（${this.hp}/${this.maxHp}）`);

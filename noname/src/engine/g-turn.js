@@ -26,6 +26,28 @@ async runGame(playerChars, io, ai) {
   // 「选完武将后所有人没有手牌、界面毫无响应」。已移除。
   this.log('=== 游戏开始 ===');
 
+  /*
+   * 【无穷之锁】开局方向
+   * ----------------------------------------------------------------
+   * 需求方明确：**游戏开始时**选择一次（不是回合开始时）。
+   * 只有拥有该技能的角色需要选；AI 默认左侧。
+   */
+  for (const p of this.players) {
+    if (!p.skills.includes('wuqiongzhisuo')) continue;
+    let side = 'left';
+    if (p.isHuman) {
+      const r = await this.io.chooseOption(p,
+        '【无穷之锁】：游戏开始时选择你的攻击范围方向',
+        [{ key: 'left', label: '左（上家）' }, { key: 'right', label: '右（下家）' }],
+      ).catch(() => null);
+      side = r === 'right' ? 'right' : 'left';
+    }
+    if (!p.storage) p.storage = {};
+    p.storage.attackSide = side;
+    this.log(`【无穷之锁】${p.name} 的攻击范围为${side === 'left' ? '左' : '右'}侧`);
+  }
+  this.emit();
+
   // 初始手牌
   for (const p of this.players) {
     const cards = this.takeFromDeckTop(4);
