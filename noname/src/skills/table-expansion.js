@@ -6,8 +6,9 @@
 
 import { CARDS } from '../cards.js';
 import { SKILLS } from '../skills.js';
-import { grantExtraSkillUse } from '../skills-util.js';
+import { grantExtraSkillUse, markSkillUsed, skillUsedUp } from '../skills-util.js';
 import { resolveQianxing, runZhouShiEffect } from './qianxing.js';
+import { runYeyan } from './yeyan.js';
 import {
   SHUANGXING_ITEMS, SHUANGXING_TEXT, shuangxingIndex, shuangxingCandidates,
   shuangxingPicks, chooseShuangxingName, setShuangxingIndex, advanceShuangxing,
@@ -428,7 +429,7 @@ export default {
       + '当其他角色打出【闪】响应你使用的【万箭齐发】结算结束后，其摸一张牌；'
       + '当你使用【万箭齐发】结算结束后，若此牌没有造成过伤害，'
       + '你摸等同于此牌目标数的牌。',
-    type: 'trigger', trigger: 'luanjiAfter',
+    type: 'trigger', trigger: 'luanjiAfter', forced: true,
     async content(ctx) {
       return resolveLuanjiAfter(ctx.player, ctx.game, ctx.event);
     },
@@ -452,29 +453,41 @@ export default {
    */
   shuangxingbansheng: {
     id: 'shuangxingbansheng', name: '双星伴生之人',
-    desc: '转换技，出牌阶段，你使用牌时，你可以将此牌视为'
+    desc: '转换技，出牌阶段，你可以选择一张手牌，将其视为'
       + '①存在于弃牌堆的同类牌；②不存于场上可见牌的同类牌；'
       + '③本回合未使用过的牌名 使用。'
       + '周始：你摸牌至两倍体力上限（至多摸五张），'
       + '然后下次发动此技能时转化的牌须非法。',
-    type: 'trigger', trigger: 'cardUsed',
+    type: 'active', trigger: 'phaseUse',
     zhuanhuanji: { options: SHUANGXING_ITEMS },
     filter(ctx) {
-      const { player, game, event } = ctx;
-      const card = event && event.card;
-      // 只转化「自己出牌阶段使用的实体牌」；虚拟牌不再叠加转化
-      if (!card || card.isVirtual) return false;
+      const { player, game } = ctx;
       if (!game.isInPlayPhase(player)) return false;
-      return shuangxingPicks(game, player, card, shuangxingIndex(player)).length > 0;
+      const idx = shuangxingIndex(player);
+      return (player.hand || []).some(
+        (c) => shuangxingPicks(game, player, c, idx).length > 0,
+      );
     },
     async content(ctx) {
-      const { player, game, event } = ctx;
-      const card = event.card;
+      const { player, game } = ctx;
       const idx = shuangxingIndex(player);
-      const name = await chooseShuangxingName(ctx, card, idx);
+
+      // ① 选一张要被转化的手牌
+      const cards = await game.io.chooseCards(player, {
+        prompt: `【双星伴生之人】当前项${SHUANGXING_ITEMS[idx]}`
+          + `（${SHUANGXING_TEXT[idx]}）：选择一张手牌转化`,
+        position: 'h', min: 1, max: 1, cancelable: true,
+        filter: (c) => shuangxingPicks(game, player, c, idx).length > 0,
+      });
+      if (!cards || !cards.length) return false;
+      const source = cards[0];
+
+      // ② 选「视为」哪张牌
+      const name = await chooseShuangxingName(ctx, source, idx);
       if (!name) return false;
-      // 只声明「视为哪张牌」，真正的替换由引擎在本次使用收尾时统一做
-      card._convertTo = name;
+
+      // ③ 使用，然后当前项推进到下一位
+      await useConvertedCard(game, player, source, name, '双星伴生之人');
       await advanceShuangxing(game, player, idx);
       return true;
     },
@@ -525,13 +538,21 @@ export default {
       if (idx === null) return false;
 
       // ② 拿哪张手牌去转化
-      const cards = await player.chooseCards({
+      const cards = await game.io.chooseCards(player, {
         prompt: `【爱恶生死之惑】：选择一张手牌，转化为`
           + `「${SHUANGXING_TEXT[idx]}」的牌使用`,
         position: 'h', min: 1, max: 1, cancelable: true,
         filter: (c) => shuangxingPicks(game, player, c, idx).length > 0,
       });
-      if (!cards || !cards.length) return false;
+      if (!cards || !cards.length) {
+        /*
+         * 没有符合条件的牌时必须**说明为什么没反应**，
+         * 否则玩家看到的就是「点了技能、选了项，然后就没了」。
+         */
+        game.log(`【爱恶生死之惑】${player.name} 没有可转化为`
+          + `「${SHUANGXING_TEXT[idx]}」的手牌，技能结束`);
+        return false;
+      }
       const source = cards[0];
 
       // ③ 转化成哪张牌
@@ -542,6 +563,79 @@ export default {
       await useConvertedCard(game, player, source, name);
       await adjustShuangxingItem(game, player, cur, idx);
       return true;
+    },
+  },
+
+  /* ===== 赤刃明霄陈（再探泰拉） ===== */
+
+  /**
+   * 破惘长行
+   * ------------------------------------------------------------------
+   * 有角色的体力/手牌要一次性变动大于 1 时，你可以蓄谋 1 张手牌 /
+   * 使用 1 张蓄谋牌，令那个结算中大于 1 的每个变动分别变为 ±1。
+   *
+   * 本技能**没有触发时机**：真正的拦截在引擎的动作原语里
+   * （player.draw / discard / recover / loseHp / game.doDamage，
+   *  见 src/mechanics/change.js 的 adjustBigChange），
+   * 这里只作为「谁拥有这个机制」的声明。
+   */
+  powangchangxing: {
+    id: 'powangchangxing', name: '破惘长行',
+    desc: '有角色的体力或手牌要一次性变动大于 1 时，'
+      + '你可以蓄谋 1 张手牌（体力变动）或使用 1 张蓄谋牌（手牌变动），'
+      + '令该次结算中大于 1 的每个变动分别变为 +1 或 -1。',
+    type: 'mod', locked: true,
+    mod: { bigChangeIntercept: () => true },
+  },
+
+  /**
+   * 修己
+   * ------------------------------------------------------------------
+   * 回合技：有伤害造成的结算中，你可将伤害结算改为对结算中所有参与者
+   * 发动一次以 4 次判定部分代替弃牌的『业炎』；
+   * 选择原伤害造成者/受到者为目标则惩罚阈值 ±1。
+   *
+   * 时机：damageBegin（伤害结算最前面），把整次结算替换掉。
+   */
+  xiuji: {
+    id: 'xiuji', name: '修己',
+    desc: '回合技。有伤害造成的结算中，你可以将此伤害结算改为'
+      + '对结算中所有参与者发动一次『业炎』（以 4 次判定部分代替弃牌）：'
+      + '选择至多三名参与者，造成共计至多 3 点火焰伤害。'
+      + '给原伤害的造成者分配 3 点、或给受到者分配 1 点以上时，'
+      + '须先以判定与弃牌凑齐 4 种花色。',
+    type: 'trigger', trigger: 'damageBegin', usable: 1,
+    /*
+     * 归属：chen 本人不必是伤害的参与者 ——
+     * 「有伤害造成的结算中」是全场监听，故显式声明 global。
+     */
+    scope: 'global',
+    filter: (ctx) => {
+      const { player, game, skill } = ctx;
+      if (!player.alive || game.over) return false;
+      if (skillUsedUp(player, skill, game)) return false;
+      return true;
+    },
+    content: async (ctx) => {
+      const { player, game, event, skill } = ctx;
+      markSkillUsed(player, skill, game);
+
+      // 本次伤害结算的全部参与者
+      const batch = game._dmgBatch;
+      const participants = [];
+      for (const p of [event.source, event.player, ...(batch ? batch.targets : [])]) {
+        if (p && !participants.includes(p)) participants.push(p);
+      }
+
+      // 原伤害被替换（不结算），业炎结算完再封锁本批后续目标的伤害
+      event.prevented = true;
+
+      game.log(`【修己】${player.name} 将这次伤害结算改为一次『业炎』`
+        + `（参与者：${participants.map((p) => p.name).join('、')}）`);
+      await runYeyan(game, player, participants, {
+        dealer: event.source, victim: event.player,
+      });
+      if (batch) batch.cancelled = true;
     },
   },
 };
@@ -641,7 +735,12 @@ async function runHeibailuanwu(player, game, batch) {
   const ghost = game.makeVirtualCard({ name: 'wanjian' });
   ghost.sourceCards = pick;
   ghost.luanjiFrom = true;
-  const targets = await game.pickTargetsForVirtual(player, ghost);
+  /*
+   * 【万箭齐发】是群体锦囊：使用时**不需要**玩家指定目标，
+   * 结算时自动命中所有其他角色。这里必须走 defaultTargetsFor，
+   * 否则会出现「发动技能却让你选目标」的多余询问。
+   */
+  const targets = game.defaultTargetsFor(player, ghost) || [];
   await game.useCard(player, ghost, targets);
   return true;
 }
@@ -725,19 +824,29 @@ async function chooseExecuteItem(game, player, cur) {
  * ------------------------------------------------------------------
  * 走引擎的 useCard，因此距离、次数、目标合法性、无懈可击等全部照常。
  */
-async function useConvertedCard(game, player, source, name) {
+async function useConvertedCard(game, player, source, name, tag = '双星伴生之人') {
   const def = CARDS[name] || {};
   const ghost = game.makeVirtualCard({
     name, suit: source.suit, number: source.number, color: source.color,
   });
   ghost.sourceCards = [source];
   ghost.fromAiesheng = true;
-  const fixed = game.defaultTargetsFor(player, ghost);
-  const targets = fixed
-    || await game.pickTargetsForVirtual(player, ghost).catch(() => []);
-  game.log(`【爱恶生死之惑】${player.name} 将 ${source.text} `
+  /*
+   * 转化出来的牌若此刻根本用不出来（周始的「须非法」），
+   * 直接交给引擎处理（它会弃掉载体并记一条日志），
+   * 绝不能去问玩家「选谁为目标」—— 那样会卡在一个假的目标选择上。
+   */
+  const usable = game.cardUsableNow(player, ghost);
+  const targets = usable
+    ? (game.defaultTargetsFor(player, ghost)
+      ?? await game.pickTargetsForVirtual(player, ghost).catch(() => []))
+    : [];
+  game.log(`【${tag}】${player.name} 将 ${source.text} `
     + `视为【${def.fullname || name}】使用`);
   await game.useCard(player, ghost, targets);
+  // 周始的「下次转化须非法」只用一次
+  if (player.storage) player.storage.shuangxingIllegalNext = false;
+  return usable;
 }
 
 /**

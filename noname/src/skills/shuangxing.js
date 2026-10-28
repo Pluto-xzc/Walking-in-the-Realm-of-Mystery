@@ -106,8 +106,17 @@ export function shuangxingCandidates(game, player, source, itemIndex) {
  */
 export function shuangxingPicks(game, player, source, itemIndex) {
   const list = shuangxingCandidates(game, player, source, itemIndex);
-  if (!illegalPending(player)) return list;
-  return list.filter((n) => !game.cardUsableNow(player, probeCard(source, n)));
+  const probe = (n) => game.cardUsableNow(player, probeCard(source, n));
+  if (illegalPending(player)) {
+    // 周始：这次转化必须是一张**此刻用不出来**的牌
+    return list.filter((n) => !probe(n));
+  }
+  /*
+   * 平时只列「现在真的用得出」的牌名。
+   * 否则会列出【闪】这种只能响应的牌，玩家选完再被要求选目标，
+   * 变成一个走不下去的假流程。
+   */
+  return list.filter(probe);
 }
 
 /** 本回合「下次转化的牌须非法」的标记是否还挂着 */
