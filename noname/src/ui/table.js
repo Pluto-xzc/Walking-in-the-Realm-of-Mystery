@@ -28,6 +28,7 @@ buildTable() {
   table.id = 'sgs-table';
   table.innerHTML = `
     <div class="sgs-topbar">
+      <button class="sgs-icon-btn" id="sgs-settings-btn" title="界面设置">⚙ 设置</button>
       <span class="sgs-topbar-title font-title">三国杀 · 身份模式</span>
       <button class="sgs-icon-btn" id="sgs-toggle-center">中央区</button>
       <button class="sgs-icon-btn" id="sgs-toggle-pile">弃牌堆</button>
@@ -155,6 +156,9 @@ buildTable() {
 
 bindGlobal() {
   document.addEventListener('click', (e) => {
+    if (e.target.id === 'sgs-settings-btn') {
+      this.toggleSettings();
+    }
     if (e.target.id === 'sgs-toggle-log') {
       $('#sgs-log').classList.toggle('hidden');
     }
@@ -182,6 +186,14 @@ bindGlobal() {
   // 「返回主站」：从当前页面路径推导站点根
   const home = document.getElementById('sgs-home');
   if (home) home.href = resolveHomeHref();
+
+  // 窗口尺寸变化 → 对手弧形分布要重排
+  if (!this._resizeBound) {
+    this._resizeBound = true;
+    window.addEventListener('resize', () => {
+      if (typeof this.layoutOpponents === 'function') this.layoutOpponents();
+    });
+  }
 },
 
 /* ---------------- 引擎 io 接口 ---------------- */

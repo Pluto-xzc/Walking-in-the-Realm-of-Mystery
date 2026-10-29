@@ -5,6 +5,7 @@
  */
 
 import { SKILLS } from '../skills.js';
+import { skillDesc } from '../skills-util.js';
 
 export default {
 
@@ -36,6 +37,7 @@ isSkillForced(skill) {
 
 async askSkill(player, skill, ctx) {
   if (!player.isHuman) {
+    await this.aiPause();       // AI 思考停顿，避免瞬间结算看不清
     return this.game.ai.decideSkill(player, skill, ctx);
   }
   // 必发效果直接生效，不询问
@@ -47,7 +49,7 @@ async askSkill(player, skill, ctx) {
   //
   //   是否发动【奸雄】？
   //   当你受到伤害后，你可以获得对你造成伤害的牌。
-  const desc = (skill.desc || '').trim();
+  const desc = skillDesc(skill).trim();
   const prompt = desc
     ? `是否发动【${skill.name}】？\n${desc}`
     : `是否发动【${skill.name}】？`;

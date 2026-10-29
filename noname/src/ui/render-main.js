@@ -111,6 +111,80 @@ renderOpponents(me) {
       }
     }
   });
+
+  // 自己也可能成为目标（【桃】【铁索连环】等），单独接线
+  this.renderSelfTargetState();
+
+  this.layoutOpponents();
+},
+
+/**
+ * 对手弧形分布
+ * ------------------------------------------------------------------
+ * 把「主视角以外」的角色沿一条上凸的圆弧等距摆开，
+ * 只改动 .sgs-opponents 内子元素的位置，牌桌其它面板（日志、手牌）
+ * 位置完全不动。关闭设置里的「对手弧形分布」会退回原来的横向一排。
+ */
+layoutOpponents() {
+  const wrap = $('#sgs-opponents');
+  if (!wrap) return;
+  const nodes = [...wrap.querySelectorAll('.sgs-player')];
+  const arc = !this.settings || this.settings.arcLayout !== false;
+
+  if (!arc || !nodes.length) {
+    wrap.classList.remove('arc');
+    nodes.forEach((n) => {
+      n.style.left = '';
+      n.style.top = '';
+      n.style.transform = '';
+    });
+    return;
+  }
+
+  wrap.classList.add('arc');
+  const w = wrap.clientWidth || 800;
+  const h = wrap.clientHeight || 260;
+  const n = nodes.length;
+
+  /*
+   * 让出右侧日志面板的位置：日志是浮层，压在弧线上会挡住最右的对手。
+   * 取日志面板实际占用的宽度作为右侧留白，并把整条弧线整体左移。
+   */
+  const logEl = $('#sgs-log');
+  const logW = (logEl && logEl.offsetParent && !logEl.classList.contains('hidden'))
+    ? logEl.offsetWidth + 16
+    : 0;
+  const usableW = Math.max(w - logW, 320);
+
+  const sample = nodes[0];
+  const cw = sample.offsetWidth || 120;
+  const ch = sample.offsetHeight || 190;
+
+  /*
+   * 需求方给的形状：一个「半圆拱」——
+   * 最左、最右的对手落在拱脚（略低于牌桌中线），中间的对手沿拱顶排开，
+   * 而且**水平间距相等**（而不是等角度，等角度会把中间拉得很开）。
+   *
+   *   x_i = cx + (i - (n-1)/2) * gap
+   *   y_i = yTop + sag * u^2        （u ∈ [-1, 1]）
+   *
+   * 其中 gap 取「卡片宽度 1.25 倍」与「能塞进可用宽度的最大间距」的较小值，
+   * 卡片多时自动收紧，不会互相压住，也不会顶到日志面板。
+   */
+  const span = Math.max(1, n - 1);
+  const gap = Math.min(cw * 1.6, (usableW - cw - 12) / span);
+  const cx = Math.max(cw / 2 + 6, Math.min(usableW - cw / 2 - 6, usableW / 2));
+  const yTop = ch / 2 + 6;
+  const sag = Math.max(h * 0.14, 26);
+
+  nodes.forEach((node, i) => {
+    const u = n === 1 ? 0 : (i - span / 2) / (span / 2);
+    const x = cx + (i - span / 2) * gap;
+    const y = yTop + sag * u * u;
+    node.style.left = `${Math.round(x)}px`;
+    node.style.top = `${Math.round(y)}px`;
+    node.style.transform = 'translate(-50%, -50%)';
+  });
 },
 
 /**

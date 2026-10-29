@@ -22,6 +22,7 @@ import { GROUPS } from '../characters.js';
 import { SKILLS } from '../skills.js';
 import { IDENTITY_LABEL } from '../match.js';
 import { $, el } from '../ui-helpers.js';
+import { skillDesc } from '../skills-util.js';
 
 export default {
 
@@ -72,7 +73,7 @@ showSkillDetail(player, skill, ev) {
   const html = `
     <div class="dp-title">${skill.name}</div>
     <div class="dp-sub">${typeText}${skill.locked ? ' · 锁定技' : ''}　持有者：${player.name}</div>
-    <div class="dp-desc">${(skill.desc || '（暂无描述）').replace(/\n/g, '<br>')}</div>
+    <div class="dp-desc">${(skillDesc(skill, player) || '（暂无描述）').replace(/\n/g, '<br>')}</div>
     <div class="dp-hint">右键其他技能/牌可查看对应详情</div>
   `;
   this.showDetailPop(html, ev);
@@ -114,7 +115,7 @@ showPlayerDetail(player, ev) {
       .filter(Boolean)
       .filter((s) => !s.sub)
       .map((s) => `<div class="dp-skill"><b>${s.name}</b>`
-        + `${s.locked ? '（锁定技）' : ''}：${s.desc || ''}</div>`)
+        + `${s.locked ? '（锁定技）' : ''}：${skillDesc(s, player)}</div>`)
       .join('');
     html += `<div class="dp-sec">技能</div><div class="dp-desc">${list}</div>`;
   }
@@ -255,7 +256,7 @@ showCardDetail(card, ev) {
     card.zone ? `所在区域：${card.zone}` : '',
   ].filter(Boolean).join('　');
   const html = `
-    <div class="dp-title">${def.fullname || card.name}</div>
+    <div class="dp-title">${card.fullname || def.fullname || card.name}</div>
     <div class="dp-sub">${meta}</div>
     <div class="dp-desc">${(def.desc || '（暂无描述）').replace(/\n/g, '<br>')}</div>
     ${def.tip ? `<div class="dp-hint">提示：${def.tip}</div>` : ''}

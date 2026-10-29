@@ -116,8 +116,8 @@ chooseAction(player, game) {
   return new Promise((resolve) => {
     if (!player.isHuman) {
       const a = game.ai.decideAction(player);
-      // 稍作延迟模拟思考
-      setTimeout(() => resolve(a), 420);
+      // 延迟时长由「设置 → AI 行动延迟」决定（默认 0.8~2.0 秒随机）
+      setTimeout(() => resolve(a), this.aiDelayMs());
       return;
     }
 

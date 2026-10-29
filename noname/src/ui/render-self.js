@@ -22,6 +22,7 @@ import { GROUPS } from '../characters.js';
 import { SKILLS } from '../skills.js';
 import { IDENTITY_COLOR, IDENTITY_LABEL } from '../match.js';
 import { $, el, charImgPath, bindImageFallback } from '../ui-helpers.js';
+import { skillDesc } from '../skills-util.js';
 
 export default {
 
@@ -118,7 +119,7 @@ renderSelf(me) {
     const isActive = s.type === 'active' || s.trigger === 'phaseUse';
     const btn = el('button', 'sgs-skill-btn' + (s.locked ? ' locked' : ''),
       s.name);
-    btn.title = `${s.name}：${s.desc}\n（右键查看详情）`;
+    btn.title = `${s.name}：${skillDesc(s, me)}\n（右键查看详情）`;
 
     if (isActive) {
       // 主动技：可点击发动
@@ -133,7 +134,7 @@ renderSelf(me) {
       // 触发技 / 锁定技：不能主动按，只做展示
       btn.disabled = true;
       btn.classList.add('trigger-hint');
-      btn.title = `${s.name}：${s.desc}\n（${s.locked ? '锁定技，' : ''}满足条件时自动询问）`;
+      btn.title = `${s.name}：${skillDesc(s, me)}\n（${s.locked ? '锁定技，' : ''}满足条件时自动询问）`;
     }
     // 右键查看详情
     btn.oncontextmenu = (ev) => {
@@ -337,7 +338,8 @@ buildCardNode(card, owner, isEquip) {
     `<span>${card.suitLabel}</span><span class="num">${card.numberText}</span>`);
   face.appendChild(corner);
 
-  const nameEl = el('div', 'card-name', CARDS[card.name] ? CARDS[card.name].label : card.name);
+  // 用实例上的 fullname：火杀/雷杀/刺杀 共用 sha 模板，但显示名不同
+  const nameEl = el('div', 'card-name', card.fullname || (CARDS[card.name] ? CARDS[card.name].label : card.name));
   face.appendChild(nameEl);
 
   const strip = el('div', 'card-type-strip');

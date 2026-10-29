@@ -21,6 +21,7 @@ import { CHARACTERS, GROUPS, packOf, pickerTabs } from '../characters.js';
 import { SKILLS } from '../skills.js';
 import { IDENTITY_COLOR, IDENTITY_LABEL, CHOICE_NUM } from '../match.js';
 import { $, $$, el, charImgPaths, resolveHomeHref } from '../ui-helpers.js';
+import { skillDesc } from '../skills-util.js';
 
 export default {
 
@@ -470,7 +471,7 @@ chooseCharacter(charIds, isLord, ctx = {}) {
           const t = el('div', 'pick-skill-title', s.name);
           if (s.locked) t.classList.add('locked');
           row.appendChild(t);
-          const d = el('div', 'pick-skill-desc', s.desc || '');
+          const d = el('div', 'pick-skill-desc', skillDesc(s));
           row.appendChild(d);
           skillList.appendChild(row);
         });

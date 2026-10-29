@@ -28,7 +28,8 @@ chooseCards(player, { prompt, position = 'he', min = 1, max = 1, filter, cancela
   return new Promise((resolve) => {
     // AI 不走这里
     if (!player.isHuman) {
-      resolve(this._aiPick(player, { position, min, max, filter, fromPlayer, cardList }));
+      const pick = this._aiPick(player, { position, min, max, filter, fromPlayer, cardList });
+      setTimeout(() => resolve(pick), this.aiDelayMs());
       return;
     }
 
@@ -138,7 +139,8 @@ chooseTargets(player, { prompt, candidates, min = 1, max = 1, card }) {
         if (eb !== ea) return eb - ea;
         return a.hp - b.hp;
       });
-      resolve(sorted.slice(0, min));
+      const pick = sorted.slice(0, min);
+      setTimeout(() => resolve(pick), this.aiDelayMs());
       return;
     }
 
@@ -226,11 +228,10 @@ chooseOption(player, prompt, options, opts = {}) {
   return new Promise((resolve) => {
     if (!player.isHuman) {
       // AI 简单策略
-      if (options.some((o) => o.key === 'discard')) {
-        resolve(player.countCards('h') >= 2 ? 'discard' : 'damage');
-      } else {
-        resolve(options[0].key);
-      }
+      const pick = options.some((o) => o.key === 'discard')
+        ? (player.countCards('h') >= 2 ? 'discard' : 'damage')
+        : options[0].key;
+      setTimeout(() => resolve(pick), this.aiDelayMs());
       return;
     }
     this.mode = 'confirm';
