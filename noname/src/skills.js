@@ -16,9 +16,11 @@ import standard from './skills/table-standard.js';
 import equip from './skills/table-equip.js';
 import expansion from './skills/table-expansion.js';
 import mo from './skills/table-mo.js';
+import ao from './skills/table-ao.js';
+import tongbao from './skills/table-tongbao.js';
 
-/* 四张表合成同一个 SKILLS 对象：合并顺序不影响语义（键名互不重叠）。 */
-export const SKILLS = { ...standard, ...equip, ...expansion, ...mo };
+/* 六张表合成同一个 SKILLS 对象：合并顺序不影响语义（键名互不重叠）。 */
+export const SKILLS = { ...standard, ...equip, ...expansion, ...mo, ...ao, ...tongbao };
 
 export { canBeishuiNow, consumeBeishui, askBeishui, qinjianOptions } from './skills/beishui.js';
 export { muniuCards, runZhouShiEffect, resolveQianxing, noteSuitUsed } from './skills/qianxing.js';

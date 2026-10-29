@@ -843,6 +843,18 @@ html, body {
   50% { box-shadow: 0 0 0 3px var(--gold-light), 0 0 32px rgba(212, 160, 23, 0.95); }
 }
 
+/* 选目标时「自己」也可以被选中 */
+.sgs-self.self-targetable { cursor: pointer; }
+.sgs-self.self-targetable #sgs-self-avatar {
+  box-shadow: 0 0 0 3px var(--gold-light), 0 0 20px rgba(212, 160, 23, 0.6);
+  animation: sgs-pulse 1.2s infinite;
+  cursor: pointer;
+}
+.sgs-self.self-targeted #sgs-self-avatar {
+  box-shadow: 0 0 0 3px #7fd4a8, 0 0 22px rgba(127, 212, 168, 0.8);
+  animation: none;
+}
+
 .sgs-player.dead { filter: grayscale(1) brightness(0.45); opacity: 0.7; }
 .sgs-player.current-turn .sgs-avatar-wrap {
   box-shadow: 0 0 0 3px #7fd4a8, 0 0 18px rgba(127, 212, 168, 0.7);
@@ -1966,3 +1978,66 @@ html, body {
 
 /* 牌不足时的横向滚动提示 */
 .sgs-self-hand { scroll-behavior: smooth; }
+/* ==================== 设置面板 · 黄线 · 弧形分布 ==================== */
+
+/* --- 设置面板 --- */
+/* 整体缩放：桌面内所有元素（含文字、卡牌、面板）一起缩放 */
+#sgs-table { zoom: var(--sgs-ui-scale, 1); }
+
+.sgs-settings {
+  position: fixed; left: 10px; top: 46px; z-index: 900;
+  width: 268px; padding: 0 0 8px;
+  background: linear-gradient(180deg, rgba(38,30,22,0.98), rgba(24,20,16,0.98));
+  border: 1px solid rgba(212,160,23,0.45); border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  color: #f2e9d8; font-size: calc(13px * var(--sgs-ui-scale, 1));
+  display: none;
+}
+.sgs-settings.active { display: block; }
+.sgs-set-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border-bottom: 1px solid rgba(212,160,23,0.25);
+  font-weight: 700; color: var(--gold-light, #d9a72c);
+}
+.sgs-set-close {
+  background: none; border: none; color: #cbbfa8; font-size: 18px;
+  cursor: pointer; line-height: 1; padding: 0 2px;
+}
+.sgs-set-close:hover { color: #fff; }
+.sgs-set-body { padding: 6px 10px; }
+.sgs-set-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; border-bottom: 1px dashed rgba(245,239,228,0.07);
+}
+.sgs-set-label { flex: 0 0 86px; color: #d8cdb8; }
+.sgs-set-range { flex: 1; accent-color: #d4a017; min-width: 0; }
+.sgs-set-val { flex: 0 0 52px; text-align: right; color: var(--gold-light, #d9a72c); font-variant-numeric: tabular-nums; }
+.sgs-set-check-wrap { flex: 1; text-align: right; }
+.sgs-set-check { accent-color: #d4a017; width: 15px; height: 15px; }
+.sgs-set-foot { padding: 6px 10px 0; text-align: right; }
+
+/* --- 指向线覆盖层 --- */
+#sgs-line-layer {
+  position: fixed; inset: 0; width: 100vw; height: 100vh;
+  pointer-events: none; z-index: 800;
+}
+.sgs-tdot { opacity: 0.9; }
+
+/* --- 对手弧形分布 --- */
+.sgs-opponents.arc { position: relative; display: block; }
+.sgs-opponents.arc .sgs-player { position: absolute; margin: 0; }
+
+/* --- 关掉动画开关 --- */
+body.sgs-no-anim *,
+body.sgs-no-anim *::before,
+body.sgs-no-anim *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+/* --- 日志框尺寸跟随设置 --- */
+.sgs-log-panel {
+  width: var(--sgs-log-w, 260px);
+  max-height: var(--sgs-log-maxh, 30vh);
+}

@@ -50,6 +50,12 @@ export const GROUPS = {
    * 「魔族精兵」包的势力标识。
    */
   mo: { key: 'mo', label: '魔', color: '#8a3b6b' },
+  /**
+   * 奥（光启新篇）
+   * ------------------------------------------------------------------
+   * 「光启新篇」包的势力标识。
+   */
+  ao: { key: 'ao', label: '奥', color: '#6f7fbf' },
 };
 
 /**
@@ -100,6 +106,17 @@ export const PACKS = {
     label: '魔族精兵',
     color: '#8a3b6b',
     group: 'mo',
+  },
+  /**
+   * 光启新篇
+   * ------------------------------------------------------------------
+   * 渡所属的扩展包。势力为「奥」。
+   */
+  guangqi: {
+    key: 'guangqi',
+    label: '光启新篇',
+    color: '#6f7fbf',
+    group: 'ao',
   },
 };
 
@@ -358,6 +375,22 @@ export const CHARACTERS = {
     sex: 'female', group: 'mo', hp: 4, maxHp: 4,
     pack: 'mozu',
     skills: ['wuqiongzhisuo', 'zongkuo'],
+  },
+
+  /* ========================= 光启新篇 (1) ========================= */
+  /**
+   * 渡 4/4、0 护甲，势力「奥」，分类「光启新篇」，称号「忘川的摆渡人」。
+   *
+   * 形态：
+   *   · 基础形态：不朽纪行 + 命运同心·朽
+   *   · 入幻形态：远客归墟 + 命运同心·生（由【命运同心·朽】自动切换）
+   */
+  du: {
+    id: 'du', name: '渡', title: '无竭命核',
+    sex: 'female', group: 'ao', hp: 4, maxHp: 4,
+    pack: 'guangqi',
+    skills: ['buxiujixing', 'buxiujixing_round', 'buxiujixing_shang',
+      'mingyuntongxin_xiu', 'mingyuntongxin_xiu_huan', 'mingyuntongxin_xiu_fail'],
   },
 
   /* ========================= 梦想协奏 (2) ========================= */

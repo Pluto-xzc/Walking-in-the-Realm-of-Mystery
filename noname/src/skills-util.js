@@ -48,3 +48,21 @@ export function grantExtraSkillUse(player, skill, game) {
   if (!rec || rec.turn !== game.turnCount) return;
   rec.n = Math.max(0, (rec.n || 0) - 1);
 }
+/**
+ * 取技能描述
+ * ------------------------------------------------------------------
+ * 技能描述可以是字符串，也可以是 (player) => string ——
+ * 后者用于「技能被修改后描述随之变化」的场合（如渡的【不朽纪行】）。
+ */
+export function skillDesc(skill, player) {
+  if (!skill) return '';
+  const d = skill.desc;
+  if (typeof d === 'function') {
+    try {
+      return d(player) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+  return d || '';
+}

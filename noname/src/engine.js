@@ -36,9 +36,12 @@ import damage from './engine/g-damage.js';
 import turn from './engine/g-turn.js';
 import play from './engine/g-play.js';
 import resolve from './engine/g-resolve.js';
+import resolveExtra from './engine/g-resolve-extra.js';
+import resolveRotation from './engine/g-resolve-rotation.js';
 
 /* 把各职责模块的方法挂到 Game.prototype 上。顺序无关：方法名互不重叠。 */
-Object.assign(Game.prototype, core, skill, damage, turn, play, resolve);
+Object.assign(Game.prototype, core, skill, damage, turn, play, resolve, resolveExtra,
+  resolveRotation);
 
 export { ZONE, OBTAINABLE_ZONES } from './engine/zones.js';
 export { Card } from './engine/card.js';

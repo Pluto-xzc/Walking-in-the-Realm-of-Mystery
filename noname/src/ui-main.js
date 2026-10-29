@@ -23,6 +23,8 @@ import ioCards from './ui/io-cards.js';
 import ioAsk from './ui/io-ask.js';
 import ioArrange from './ui/io-arrange.js';
 import result from './ui/result.js';
+import settings from './ui/settings.js';
+import targetLine from './ui/target-line.js';
 
 /* UI 的实现体按功能组切分在 ./ui/ 下（见 tools/split_ui.cjs），
  * 这里只保留构造与混入，方法查找仍走原型链，UI 的对外身份不变。 */
@@ -45,13 +47,17 @@ export class UI {
     this.identityMarks = {};
     /** 收藏的武将（localStorage 持久化） */
     this.favorites = this.loadFavorites();
+    /** 界面设置（缩放 / 面板尺寸 / AI 延迟 …，localStorage 持久化） */
+    this.settings = this.loadSettings();
   }
 
   /* ---------------- 生命周期 ---------------- */
   init() {
     this.ensureSplash();
     this.buildTable();
+    this.buildSettingsPanel();
     this.bindGlobal();
+    this.applySettings();
   }
 }
 
@@ -68,6 +74,8 @@ Object.assign(
   ioAsk,
   ioArrange,
   result,
+  settings,
+  targetLine,
 );
 
 export default UI;

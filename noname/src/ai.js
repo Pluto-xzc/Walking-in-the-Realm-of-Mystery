@@ -63,6 +63,24 @@ export function useValue(card, player, game, usedCount = 0) {
     case 'huogong': return 4;
     case 'tiesuo': return 2.5;
     case 'bingliang': return 3.5;
+    /* ---------- 扩展牌（四副牌堆） ----------
+     * 数值参考同类牌：顺手/过河 ≈ 8~10，无中 4.5，决斗 1。
+     * 用户给定的相对强弱：逐近 > 过河/顺手；洞烛 > 无中；
+     * 增兵 ≈ 洞烛；水淹 > 决斗；金蝉 / 闪闪 是保命牌。 */
+    case 'shanshan': return marginal([7, 5.1, 2], usedCount);   // 等同【闪】
+    case 'jinchan': return 7;                                    // 保命，等同高价值
+    case 'zhujin': return 12 / (3 + usedCount);                  // 高于过河/顺手
+    case 'dongzhu': return 5.5;                                  // 高于无中
+    case 'zengbing': return 5.5;
+    case 'shushangkaihua': return 4.5;                           // 参考无中
+    case 'shuiyan': return 6;                                    // 直伤，强于决斗
+    case 'xieling': return 4;
+    case 'shezhan': return 4;
+    case 'diaobing': return 3.5;
+    case 'chuqi': return 5;
+    case 'huoshaolianying': return 4.5;
+    case 'yuanjiao': return 5;
+    case 'fulei': return 0.5;                                    // 参考闪电
     default:
       if (CARDS[n] && CARDS[n].type === 'equip') return equipUseValue(card, player);
       return 2;
@@ -117,6 +135,10 @@ export const KEEP_VALUE = {
   equip: 3.5,
   /* 风林火山 */
   jiu: 6, huogong: 4.5, tiesuo: 3.5, bingliang: 4.5,
+  /* 扩展牌 */
+  shanshan: 7.5, jinchan: 8.5, zhujin: 7, dongzhu: 7, zengbing: 6,
+  shushangkaihua: 6, shuiyan: 6, xieling: 5, shezhan: 5,
+  diaobing: 4.5, chuqi: 5.5, huoshaolianying: 5, yuanjiao: 5.5, fulei: 1.5,
 };
 
 /**
