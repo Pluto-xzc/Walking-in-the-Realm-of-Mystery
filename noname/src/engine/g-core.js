@@ -5,7 +5,8 @@
  * 本文件导出普通对象字面量，方法会被混入 Game.prototype，内部 this 即 Game 实例。
  */
 
-import { DECK_LIST } from '../cards.js';
+import { DECK_LIST, CARDS } from '../cards.js';
+import { applyRotation } from '../mechanics/rotation.js';
 import { noteIgnitedDiscard, isIgnited, addToRenku, renkuCards, noteHpChange, isHidden, enterHidden, cannotRespond } from '../mechanics.js';
 import { ZONE } from './zones.js';
 import { Card } from './card.js';
@@ -225,6 +226,21 @@ getShowingCards() {
 
 emit() { this.onUpdate(); },
 
+/**
+ * AI 思考停顿
+ * ------------------------------------------------------------------
+ * 让 AI 的每次行动之间有肉眼可见的间隔，否则一回合会瞬间刷完。
+ * 具体时长由界面的「AI 行动延迟」设置决定（默认 0.8~2.0 秒随机）；
+ * 拿不到设置时退回 500ms。Node 测试里 io 没有这个方法 → 立即返回。
+ */
+async waitAI() {
+  const io = this.io;
+  if (!io) return;
+  if (typeof io.aiPause === 'function') return io.aiPause();
+  const ms = typeof io.aiDelayMs === 'function' ? io.aiDelayMs() : 0;
+  if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+},
+
 log(text) {
   this.logs.push({ text, turn: this.turnCount });
   if (this.logs.length > 500) this.logs.shift();
@@ -259,7 +275,38 @@ setup(playerChars, io, ai) {
 },
 
 buildDeck() {
-  this.deck = DECK_LIST.map(([suit, num, name]) => new Card(suit, num, name));
+  /*
+   * 第 4 个字段是「标记」：
+   *   'fire' / 'thunder' → 火杀 / 雷杀（写进 Card.nature）
+   *   'cisha'            → 刺杀（写进 Card.cisha）
+   */
+  this.deck = DECK_LIST.map(([suit, num, name, tag]) => {
+    const c = new Card(suit, num, name);
+    if (tag === 'fire' || tag === 'thunder') {
+      c.nature = tag;
+      // 展示名随之变成「火杀 / 雷杀」，但牌名仍是 sha
+      if (name === 'sha') c.fullname = tag === 'fire' ? '火杀' : '雷杀';
+    } else if (tag === 'cisha') {
+      c.cisha = true;
+      c.fullname = '刺杀';
+    }
+    return c;
+  });
+
+  /*
+   * 【轮换牌】每局开始随机挑一个卡包，把 12 张额外牌加进牌堆。
+   * 固定牌堆 196 张 + 轮换 12 张 = 208 张。日志写清用的是哪个包。
+   */
+  this.rotation = applyRotation(this.deck, this._rotationPack);
+  if (this.rotation && this.rotation.pack) {
+    const p = this.rotation.pack;
+    const cn = (k) => (CARDS[k] && CARDS[k].fullname) || k;
+    this.log(`本局轮换牌卡包：【${p.name}】——加入 ${this.rotation.added.length} 张牌`);
+    for (const c of this.rotation.added) {
+      this.log(`  ${c.suitLabel}${c.numberText}：${cn(c.name)}`);
+    }
+  }
+
   this.shuffle(this.deck);
   this.discardPile = [];
 },

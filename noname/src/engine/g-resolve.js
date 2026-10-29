@@ -23,15 +23,47 @@ async resolveSha(player, card, targets) {
     if (!realTarget.alive) continue;
 
     const needShan = this.needShanCount(player, card);
+    /*
+     * 【刺杀】：目标二选一
+     *   ① 弃置一张牌 → 只需一张【闪】
+     *   ② 不弃牌     → 必须打出两张【闪】
+     * 弃牌发生在询问【闪】之前，所以这里先处理。
+     */
+    let cishaExtra = 0;
+    if (card.cisha) {
+      const pay = await this.io.chooseOption(realTarget,
+        '【刺杀】：弃置一张牌可令本次只需一张【闪】，否则须两张【闪】',
+        [{ key: 'discard', label: '弃置一张牌' }, { key: 'none', label: '不弃置（须两张【闪】）' }]);
+      let discarded = false;
+      if (pay === 'discard' && realTarget.countCards('he') > 0) {
+        const c = await realTarget.chooseCards({
+          prompt: '刺杀：弃置一张牌', position: 'he', min: 1, max: 1, cancelable: true,
+        });
+        if (c && c.length) {
+          await realTarget.discard(c);
+          discarded = true;
+          this.log(`${realTarget.name} 弃置 ${c[0].text}，只需打出一张【闪】`);
+        }
+      }
+      if (!discarded) cishaExtra = 1;
+    }
+
     let dodged = false;
-    for (let i = 0; i < needShan; i++) {
+    for (let i = 0; i < needShan + cishaExtra; i++) {
       const r = await this.askShan(realTarget, player, card);
       if (!r) break;
-      if (i === needShan - 1) dodged = true;
+      if (i === needShan + cishaExtra - 1) dodged = true;
     }
 
     if (dodged) {
       this.log(`${realTarget.name} 打出【闪】抵消了【杀】`);
+      /* 【闪闪】抵消后获得这张【杀】 */
+      if (card._ssTaker && card._ssTaker.alive) {
+        this.log(`【闪闪】令 ${card._ssTaker.name} 获得了 ${card.text}`);
+        await card._ssTaker.gain([card], 'gain2');
+        this.clearJiu(player);
+        continue;
+      }
       /*
        * 「被闪后仍可造成伤害」类技能（装备技优先）
        * ----------------------------------------------------------------
@@ -100,8 +132,27 @@ async askShan(target, source, card) {
     this.log(`${target.name} 被跳过了牌的询问，无法响应【${card ? card.fullname : '杀'}】`);
     return false;
   }
+  /*
+   * 防具技是否被「无视防具」的武器压制（青釭剑）。
+   * 防具自身可以声明 armorSkillUnignorable 来拒绝被无视（精银甲）。
+   */
+  const ignoresArmor = (() => {
+    if (!source) return false;
+    for (const c of Object.values(source.equips).filter(Boolean)) {
+      const sk = SKILLS[CARDS[c.name] && CARDS[c.name].equipSkill];
+      if (sk && sk.mod && sk.mod.ignoreArmorSkills && sk.mod.ignoreArmorSkills()) return true;
+    }
+    return false;
+  })();
+  const armorSkillWorks = (sid) => {
+    if (!ignoresArmor) return true;
+    const sk = SKILLS[sid];
+    return !!(sk && sk.mod && sk.mod.armorSkillUnignorable && sk.mod.armorSkillUnignorable());
+  };
+
   // 八卦阵
-  const bagua = target.equips.equip2 && CARDS[target.equips.equip2.name].equipSkill === 'bagua_skill';
+  const bagua = target.equips.equip2 && CARDS[target.equips.equip2.name].equipSkill === 'bagua_skill'
+    && armorSkillWorks('bagua_skill');
   if (bagua) {
     const wantBagua = target.isHuman
       ? await this.io.askBagua(target)
@@ -136,34 +187,62 @@ async askShan(target, source, card) {
   }
 
   // 倾国：黑色手牌当闪
-  let candidates = target.getCards('h', (c) => c.name === 'shan');
+  // 【闪闪】也可以当【闪】打出（普通【闪】优先，把闪闪留到最后用）
+  let candidates = target.getCards('h', (c) => c.name === 'shan' || c.name === 'shanshan')
+    .sort((a, b) => (a.name === 'shan' ? -1 : 1) - (b.name === 'shan' ? -1 : 1));
   let asQingguo = false;
   if (!candidates.length && target.hasSkill('qingguo')) {
     candidates = target.getCards('h', (c) => c.color === 'black');
     asQingguo = candidates.length > 0;
   }
+
+  // 精银甲：没有【闪】时，可以把任意一张手牌当【闪】打出
+  const hasJingyin = !!(target.equips.equip2
+    && CARDS[target.equips.equip2.name].equipSkill === 'jingyin_skill'
+    && armorSkillWorks('jingyin_skill'));
+  let asJingyin = false;
+  if (!candidates.length && hasJingyin && target.countCards('h') > 0) {
+    candidates = target.getCards('h');
+    asJingyin = true;
+  }
   if (!candidates.length) return false;
+
+  const shanFilter = (c) => c.name === 'shan' || c.name === 'shanshan';
+
+  /** 打出的是「非转化的真【闪】」时，精银甲摸一张牌 */
+  const afterShan = async (c) => {
+    if (!hasJingyin || !c || c.name !== 'shan') return;
+    this.log(`【精银甲】${target.name} 打出非转化的【闪】，摸一张牌`);
+    await target.draw(1);
+  };
+  const markTaker = (c) => { if (c && c.name === 'shanshan') card._ssTaker = target; };
 
   if (target.isHuman) {
     const picked = await this.io.chooseCards(target, {
-      prompt: `响应【杀】：打出一张【闪】${asQingguo ? '（倾国：黑色手牌）' : ''}`,
+      prompt: `响应【杀】：打出一张【闪】${asQingguo ? '（倾国：黑色手牌）' : ''}${asJingyin ? '（精银甲：任意手牌）' : ''}`,
       position: 'h', min: 1, max: 1,
-      filter: asQingguo ? (c) => c.color === 'black' : (c) => c.name === 'shan',
+      filter: asQingguo ? (c) => c.color === 'black'
+        : (asJingyin ? () => true : shanFilter),
       cancelable: true,
     });
     if (!picked || !picked.length) return false;
     await target.loseCards(picked);
     this.toCenter(picked);
+    markTaker(picked[0]);
     await this.emitCardResponded(target, picked[0], 'shan');
-    this.log(`${target.name} 打出【闪】${asQingguo ? '（倾国）' : ''}`);
+    this.log(`${target.name} 打出【${picked[0].fullname}】${asQingguo ? '（倾国）' : ''}${asJingyin ? '（精银甲）' : ''}`);
+    await afterShan(picked[0]);
     return true;
   }
+  await this.waitAI();          // AI「考虑要不要闪」的停顿
   if (this.ai.shouldRespondShan(target, source, card)) {
     const c = candidates[0];
     await target.loseCards([c]);
     this.toCenter(c);
+    markTaker(c);
     await this.emitCardResponded(target, c, 'shan');
-    this.log(`${target.name} 打出【闪】${asQingguo ? '（倾国）' : ''}`);
+    this.log(`${target.name} 打出【${c.fullname}】${asQingguo ? '（倾国）' : ''}${asJingyin ? '（精银甲）' : ''}`);
+    await afterShan(c);
     return true;
   }
   return false;
@@ -323,7 +402,9 @@ async resolveShunshou(player, targets) {
 async resolveWugu(player) {
   const alive = this.players.filter((p) => p.alive);
   const pool = [];
-  for (let i = 0; i < alive.length; i++) {
+  // 亮出的牌数 = 目标人数 + 2（原版是目标人数）
+  const total = alive.length + 2;
+  for (let i = 0; i < total; i++) {
     const c = this.takeFromDeckTop(1)[0];
     if (c) pool.push(c);
   }
@@ -383,6 +464,21 @@ async resolveTaoyuan(player) {
 
 async resolveAoe(player, card, respondName) {
   const needSha = respondName === 'sha';
+  /*
+   * 【同一次伤害结算】的记账
+   * ----------------------------------------------------------------
+   * 群体锦囊对多名角色逐个结算伤害，但它们属于**同一次伤害结算**。
+   * 修己【修己】要「把这次伤害结算改为一次业炎」，因此需要知道
+   * 本次结算的全部参与者；由 here 记录，doDamage 里读取。
+   */
+  const prevBatch = this._dmgBatch;
+  this._dmgBatch = {
+    card,
+    source: player,
+    targets: this.players.filter((p) => p.alive && p !== player
+      && this.canTargetByLimits(player, p, card)),
+  };
+  try {
   for (const target of this.players.filter((p) => p.alive && p !== player)) {
     if (!target.alive) continue;
     /*
@@ -423,6 +519,9 @@ async resolveAoe(player, card, respondName) {
       this.log(`【界乱击】${target.name} 打出【闪】响应，摸一张牌`);
       await target.draw(1);
     }
+  }
+  } finally {
+    this._dmgBatch = prevBatch;
   }
 },
 
@@ -483,41 +582,61 @@ async resolveHuogong(player, targets) {
   await this.showCards([shown], target, 1200);
   this.log(`${target.name} 因【火攻】展示了 ${shown.text}`);
 
-  // ② 使用者弃一张同花色手牌（可选）
+  /*
+   * ② 造成伤害的代价，二选一：
+   *    ① 重铸一张**同花色**手牌（弃置并摸一张）
+   *    ② 弃置一张**同颜色**手牌
+   */
   const suitName = (SUITS[shown.suit] && SUITS[shown.suit].name) || shown.suit;
+  const colorName = shown.color === 'red' ? '红色' : '黑色';
   const sameSuit = player.getCards('h', (c) => c.suit === shown.suit);
-  if (!sameSuit.length) {
-    this.log(`${player.name} 没有${suitName}手牌，【火攻】未造成伤害`);
-    // 未受伤 → 加「火攻2」标记
+  const sameColor = player.getCards('h', (c) => c.color === shown.color);
+  if (!sameSuit.length && !sameColor.length) {
+    this.log(`${player.name} 没有${suitName}或${colorName}手牌，【火攻】未造成伤害`);
     this._markHuogongFail(target);
     return;
   }
 
-  let discard = null;
+  const options = [];
+  if (sameSuit.length) options.push({ key: 'recast', label: `重铸一张${suitName}手牌` });
+  if (sameColor.length) options.push({ key: 'discard', label: `弃置一张${colorName}手牌` });
+  options.push({ key: 'none', label: '不发动' });
+
+  const choice = await this.io.chooseOption(player,
+    `【火攻】：支付代价可对 ${target.name} 造成 1 点火焰伤害`, options);
+
+  if (choice === 'none') {
+    this.log(`${player.name} 不发动【火攻】，未造成伤害`);
+    this._markHuogongFail(target);
+    return;
+  }
+
+  const pool = choice === 'recast' ? sameSuit : sameColor;
+  let pay;
   if (player.isHuman) {
     const picked = await this.io.chooseCards(player, {
-      prompt: `【火攻】：可弃置一张${suitName}手牌，对其造成 1 点火焰伤害`,
+      prompt: choice === 'recast' ? `【火攻】：选择一张${suitName}手牌重铸` : `【火攻】：选择一张${colorName}手牌弃置`,
       position: 'h', min: 1, max: 1,
-      filter: (c) => c.suit === shown.suit,
-      cancelable: true,
+      filter: (c) => pool.includes(c), cancelable: true,
     });
-    discard = (picked && picked[0]) || null;
+    pay = (picked && picked[0]) || null;
   } else {
-    discard = this.ai.shouldHuogongDiscard(player, target) ? sameSuit[0] : null;
+    pay = this.ai.shouldHuogongDiscard(player, target) ? pool[0] : null;
   }
-
-  if (!discard) {
-    this.log(`${player.name} 放弃弃牌，【火攻】未造成伤害`);
+  if (!pay) {
+    this.log(`${player.name} 放弃支付代价，【火攻】未造成伤害`);
     this._markHuogongFail(target);
     return;
   }
 
-  // 注意：这里必须用 discard(cards) —— 直接把**已选定的牌**弃置。
-  // 不能调 discardCards([card])：那个方法的第一个参数是「数量」，
-  // 传数组会再去询问玩家选牌，导致实际没弃掉（历史 bug：
-  // 玩家弃了牌但牌还在手上）。
-  await player.discard([discard]);
-  this.log(`${player.name} 弃置 ${discard.text}，对 ${target.name} 造成火焰伤害`);
+  // 注意：必须用 discard(cards) 直接弃置选定的牌
+  await player.discard([pay]);
+  if (choice === 'recast') {
+    await player.draw(1);
+    this.log(`${player.name} 重铸 ${pay.text}，对 ${target.name} 造成火焰伤害`);
+  } else {
+    this.log(`${player.name} 弃置 ${pay.text}，对 ${target.name} 造成火焰伤害`);
+  }
   await target.damage(1, player, 'huogong', null, 'fire');
 },
 

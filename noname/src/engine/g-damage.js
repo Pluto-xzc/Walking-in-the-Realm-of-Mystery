@@ -7,12 +7,39 @@
 
 import { CARDS, makeEmptyEquips } from '../cards.js';
 import { SKILLS } from '../skills.js';
-import { flushExcludedOnDeath, triggerFailedSave, markMoDamaged, noteHpChange, isHidden, exitHidden, cannotRespond, clearOccupyOnDeath } from '../mechanics.js';
+import { flushExcludedOnDeath, triggerFailedSave, markMoDamaged, noteHpChange, isHidden, exitHidden, cannotRespond, clearOccupyOnDeath, adjustBigChange } from '../mechanics.js';
 import { ZONE, IDENTITY_NAME } from './zones.js';
 
 export default {
 async doDamage(target, num, source, skill, card, nature = null) {
   if (!target.alive || this.over) return null;
+
+  /*
+   * 【修己】已把本次伤害结算改为一次业炎
+   * ----------------------------------------------------------------
+   * 群体锦囊会逐个角色结算伤害，修己把「整次结算」替换掉之后，
+   * 后续目标的伤害全部跳过。
+   */
+  if (this._dmgBatch && this._dmgBatch.cancelled) {
+    this.log(`${target.name} 的这次伤害已被【修己】替换，跳过`);
+    return null;
+  }
+
+  // 【破惘长行】一次的体力变动大于 1 时可由技能改为 ±1
+  if (num > 1) {
+    const nd = await adjustBigChange(this, 'hp', -num);
+    if (nd > 0) {
+      // 反向（把伤害改成回复）不能突破体力上限
+      if (target.hp >= target.maxHp) {
+        this.log(`【破惘长行】${target.name} 已到体力上限`
+          + `（${target.hp}/${target.maxHp}），本次回复实际为 0`);
+      } else {
+        await target.recover(nd);
+      }
+      return { player: target, source, num: 0, baseNum: num, reversed: true, prevented: true };
+    }
+    num = -nd;
+  }
 
   /*
    * 【隐匿】「受到伤害时**防止那次伤害**后登场」
@@ -34,6 +61,34 @@ async doDamage(target, num, source, skill, card, nature = null) {
 
   // 属性来源：显式传入 > 牌的属性 > 无
   const dmgNature = nature || (card && card.nature) || null;
+
+  /*
+   * 【希佩】：未受星神赐福的角色受到伤害时，可以被取消。
+   * 取消后本回合所有角色造成的伤害 -1。
+   */
+  if (await this.askXipei(target, source, num)) {
+    this.emit();
+    return { player: target, source, num: 0, prevented: true };
+  }
+
+  /* 【希佩】生效后：本回合所有伤害 -1 */
+  if (this._damageMinusOneTurn && num > 0) {
+    num = Math.max(0, num - 1);
+    this.log(`【希佩】本回合所有角色造成的伤害 -1`);
+    if (num === 0) {
+      this.emit();
+      return { player: target, source, num: 0, prevented: true };
+    }
+  }
+
+  /*
+   * 【奥博洛斯】：目标本回合造成伤害时，可以摸 X 张牌（X 为伤害值）。
+   * 这里挂在**伤害来源**身上（谁造成的伤害谁摸）。
+   */
+  if (source && source.flags && source.flags.aoboluosi && num > 0) {
+    await source.draw(num);
+    this.log(`【奥博洛斯】${source.name} 造成 ${num} 点伤害，摸了 ${num} 张牌`);
+  }
 
   const ev = {
     player: target, source, num: Math.max(0, num), skill, card,
@@ -378,6 +433,8 @@ async checkBaiyinLose(player, card) {
   const def = CARDS.baiyin;
   if (!def || def.equipSkill !== 'baiyin_skill') return;
   if (!player.alive) return;
+  await player.draw(1);
+  this.log(`${player.name} 失去【白银狮子】，摸一张牌`);
   if (player.hp >= player.maxHp) {
     this.log(`${player.name} 失去【白银狮子】，但体力已满`);
     return;
@@ -387,12 +444,28 @@ async checkBaiyinLose(player, card) {
   this.emit();
 },
 
+/**
+ * 【天机图】离开装备区：把手牌摸至七张
+ */
+async checkTianjiLose(player, card) {
+  if (!card || card.name !== 'tianjitu') return;
+  if (!player.alive) return;
+  const need = 7 - player.countCards('h');
+  if (need <= 0) return;
+  this.log(`${player.name} 失去【天机图】，将手牌摸至七张`);
+  await player.draw(need);
+},
+
 isImmune(player, card) {
   for (const c of Object.values(player.equips).filter(Boolean)) {
     const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
     const sk = esid && SKILLS[esid];
     if (sk && sk.mod && sk.mod.immunity) {
       try { if (sk.mod.immunity(card)) return true; } catch { /* 忽略 */ }
+    }
+    // 锦囊免疫（仁王盾的轮次技：黑色锦囊）
+    if (sk && sk.mod && sk.mod.trickImmunity) {
+      try { if (sk.mod.trickImmunity(card, player)) return true; } catch { /* 忽略 */ }
     }
   }
   return false;
@@ -491,6 +564,8 @@ async enterDying(player, source) {
 async killPlayer(player, source) {
   player.alive = false;
   player.hp = 0;
+  // 记录阵亡轮次：供「本轮是否有角色死亡」类技能查询
+  player.deathRound = this.roundCount | 0;
   // 阵亡时公开真实身份（身份模式下死者身份必须亮明）
   const wasHidden = !player.identityShown;
   player.identityShown = true;

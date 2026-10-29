@@ -27,6 +27,19 @@ async runGame(playerChars, io, ai) {
   this.log('=== 游戏开始 ===');
 
   /*
+   * 技能授予的「命运回合」
+   * ----------------------------------------------------------------
+   * 技能可以声明 `mod: { destinyTurn: true }`，持有者开局即拥有命运回合。
+   */
+  for (const p of this.players) {
+    const granted = (p.skills || []).some((sid) => {
+      const sk = SKILLS[sid];
+      return !!(sk && sk.mod && sk.mod.destinyTurn);
+    });
+    if (granted) p.destinyTurn = true;
+  }
+
+  /*
    * 【无穷之锁】开局方向
    * ----------------------------------------------------------------
    * 需求方明确：**游戏开始时**选择一次（不是回合开始时）。
@@ -71,6 +84,17 @@ async runGame(playerChars, io, ai) {
     if (!p.alive) continue;
     await this.runTurn(p);
     if (this.over) break;
+
+    /* 【岚】：当前回合结束后，目标获得一个额外回合 */
+    if (this._pendingExtraTurns && this._pendingExtraTurns.length) {
+      const extra = this._pendingExtraTurns.shift();
+      if (extra && extra.alive && !this.over) {
+        this.log(`【岚】${extra.name} 开始额外回合`);
+        extra.extraTurn = true;
+        await this.runTurn(extra);
+        if (this.over) break;
+      }
+    }
 
     /*
      * 【命运回合】
@@ -165,6 +189,8 @@ async runTurn(player) {
    * 同时维护 roundCount（轮次）：从 1 号位开始新的一轮时 +1。
    */
   this._turnIsRated = !player.extraTurn;
+  // 命运回合标记：extraTurn 会被清掉，技能需要能查到「本回合是不是命运回合」
+  this.isDestinyTurn = !!player.extraTurn;
   if (player.extraTurn) player.extraTurn = false;   // 额外回合用完即清
   if (this._turnIsRated && player.id === 0) this.roundCount = (this.roundCount || 1);
   markRatedTurnStarted(this, player);
@@ -216,6 +242,12 @@ async runTurn(player) {
   await this.phaseDiscard(player);
   if (!player.alive || this.over) return;
 
+  /* 【挟令】攒下的额外阶段（回合结束时执行） */
+  if (player.flags.xielingExtra && player.flags.xielingExtra.length) {
+    await this.resolveXielingExtra(player);
+    if (!player.alive || this.over) return;
+  }
+
   await this.checkSkills('turnEnd', { player });
 
   /* ------------------------------------------------------------
@@ -228,6 +260,23 @@ async runTurn(player) {
    * 这不符合原版规则。
    * ------------------------------------------------------------ */
   this.clearJiu(player, true);
+
+  /*
+   * 【轮换牌】的「本回合」临时状态
+   * ----------------------------------------------------------------
+   * 寒门志（本回合不能使用牌）、塔伊兹育罗斯（用牌前付代价）、
+   * 奥博洛斯（手牌上限 1 + 伤害后摸牌）、希佩（本回合伤害 -1）
+   * 都是「本回合」效果的，回合结束时统一清掉。
+   */
+  for (const p of this.players) {
+    if (!p.flags) continue;
+    delete p.flags.cannotUseCardTurn;
+    delete p.flags.tayiziyuluosiCost;
+    delete p.flags.aoboluosi;
+    delete p.flags.handLimitOverride;
+    if (p.flags.handVisibleTo) delete p.flags.handVisibleTo;
+  }
+  this._damageMinusOneTurn = false;
 
   /*
    * 【调离】的自动调回
@@ -315,6 +364,21 @@ async phaseJudge(player) {
       } else {
         await this.moveShandianToNext(player, card);
       }
+    } else if (card.name === 'fulei') {
+      /*
+       * 【浮雷】：判定为黑桃 → 受到 X 点雷电伤害
+       * （X 为此【浮雷】判定出黑桃的次数，记在卡上）
+       * 然后无论如何都移到下家的判定区。
+       */
+      const j = await player.judge('fulei');
+      if (j.suit === 'spade') {
+        card.fuleiSpades = (card.fuleiSpades || 0) + 1;
+        const x = card.fuleiSpades;
+        this.log(`【浮雷】判定为黑桃，${player.name} 受到 ${x} 点雷电伤害`);
+        await player.damage(x, null, 'fulei', null, 'thunder');
+        if (!player.alive) { this.toDiscard(card); card.zone = ZONE.DISCARD; return; }
+      }
+      await this.moveShandianToNext(player, card);
     }
     this.emit();
   }
@@ -327,7 +391,7 @@ async moveShandianToNext(player, card) {
   if (next && next !== player) {
     card.zone = ZONE.JUDGE;
     next.judges.push(card);
-    this.log(`【闪电】移动到 ${next.name} 的判定区`);
+    this.log(`【${card.fullname}】移动到 ${next.name} 的判定区`);
   } else {
     this.toDiscard(card);
     card.zone = ZONE.DISCARD;
@@ -381,6 +445,12 @@ async phaseUse(player) {
   let guard = 0;
   while (guard++ < 60) {
     if (!player.alive || this.over) { this._inPlayPhase = false; return; }
+    // 【挟令】等牌可以让出牌阶段提前结束
+    if (player.hasFlag('endUsePhase')) {
+      player.flags.endUsePhase = false;
+      this.log(`${player.name} 提前结束了出牌阶段`);
+      break;
+    }
     const action = await this.io.chooseAction(player, this);
     if (action.type === 'end') break;
     if (action.type === 'use') {

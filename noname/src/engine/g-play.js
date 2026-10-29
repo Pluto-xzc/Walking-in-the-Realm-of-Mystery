@@ -7,7 +7,7 @@
 
 import { CARDS } from '../cards.js';
 import { noteSuitUsed } from '../skills.js';
-import { isIgnited, isDetached } from '../mechanics.js';
+import { isIgnited, isDetached, enterSettlement, exitSettlement } from '../mechanics.js';
 import { ZONE, EQUIP_SLOT_MAP_SHORT } from './zones.js';
 
 export default {
@@ -148,10 +148,16 @@ async emitCardResponded(player, card, reason = '') {
  * 所以结算一结束就必须还原，否则牌堆里会留下一张假的【杀】。
  */
 async useCard(player, card, targets) {
+  enterSettlement(this);          // 【破惘长行】以「一张牌的结算」为界
+  // UI 钩子：使用牌时画出「发起者 → 每个目标」的黄线（引擎不关心实现）
+  if (typeof this.io?.showCardTargets === 'function') {
+    try { this.io.showCardTargets(player, targets || []); } catch (e) { /* 纯视觉效果，失败不影响对局 */ }
+  }
   try {
     return await this.useCardCore(player, card, targets);
   } finally {
     this.restoreConvertedCard(card);
+    exitSettlement(this);
   }
 },
 
@@ -187,6 +193,20 @@ async useCardCore(player, card, targets) {
   if (isEquipped) {
     this.log(`【${card.fullname}】已在装备区，无法再次使用`);
     return;
+  }
+
+  /* 【寒门志】：本回合不能使用或打出牌 */
+  if (player.flags && player.flags.cannotUseCardTurn) {
+    this.log(`${player.name} 本回合不能使用或打出牌（寒门志）`);
+    return;
+  }
+
+  /* 【塔伊兹育罗斯】：用牌前须弃一张牌或失去 1 点体力 */
+  if (player.flags && player.flags.tayiziyuluosiCost) {
+    if (!await this.payTayiziyuluosiCost(player)) {
+      this.log(`${player.name} 未支付【塔伊兹育罗斯】的代价，不能使用牌`);
+      return;
+    }
   }
 
   // ② 装备区被废除时不能装备
@@ -237,16 +257,19 @@ async useCardCore(player, card, targets) {
     }
   }
 
-  // ⑤ 朱雀羽扇：可将普通【杀】当火【杀】使用
-  //    由调用方通过 card.useFire = true 表明意图（UI 询问 / AI 决策）。
-  //    这里补全属性，使后续伤害结算按火焰处理。
-  if (card.name === 'sha' && !card.nature && this.canUseAsFireSha(player)) {
-    const wantFire = card.useFire === true
-      || (card.useFire === undefined && this.ai && this.ai.wantFireSha
-        && this.ai.wantFireSha(player, targets));
-    if (wantFire) {
-      card.nature = 'fire';
-      this.log(`${player.name} 发动【朱雀羽扇】，此【杀】视为火【杀】`);
+  // ⑤ 属性杀转化（朱雀羽扇）：可将普通【杀】改为火【杀】或雷【杀】
+  //    由调用方通过 card.useElement 表明意图（UI 询问 / AI 决策）。
+  if (card.name === 'sha' && !card.nature) {
+    const opts = this.elementShaOptions(player) || [];
+    if (opts.length) {
+      const want = card.useElement
+        || (card.useFire === true ? 'fire' : undefined)
+        || (card.useElement === undefined && this.ai && this.ai.wantFireSha
+          && opts.includes('fire') && this.ai.wantFireSha(player, targets) ? 'fire' : undefined);
+      if (want && opts.includes(want)) {
+        card.nature = want;
+        this.log(`${player.name} 发动【朱雀羽扇】，此【杀】视为${want === 'fire' ? '火' : '雷'}【杀】`);
+      }
     }
   }
 
@@ -266,9 +289,16 @@ async useCardCore(player, card, targets) {
     } else if (player.getCards('he').includes(card)) {
       await player.loseCards([card]);
     }
+    /*
+     * 【护心镜】可以「对其他角色使用」：给他装上去（顶掉原来的防具）。
+     * 其余装备只能装给自己。
+     */
+    const equipTo = def.usableOnOther && targets && targets.length && targets[0] !== player
+      ? targets[0]
+      : player;
     // 装备区被废除时不消耗这张牌，退回手牌
-    if (player.isEquipSlotDisabled(def.subtype)) {
-      this.log(`${player.name} 的${EQUIP_SLOT_MAP_SHORT[def.subtype] || def.subtype}区已被废除，【${card.fullname}】无法装备`);
+    if (equipTo.isEquipSlotDisabled(def.subtype)) {
+      this.log(`${equipTo.name} 的${EQUIP_SLOT_MAP_SHORT[def.subtype] || def.subtype}区已被废除，【${card.fullname}】无法装备`);
       if (!player.hand.includes(card)) {
         card.zone = 'hand';
         card.owner = player;
@@ -278,7 +308,7 @@ async useCardCore(player, card, targets) {
       return;
     }
     await this.emitCardUsed(player, card, targets);
-    await this.equipCard(player, card);
+    await this.equipCard(equipTo, card);
     return;
   }
 
@@ -326,14 +356,46 @@ async useCardCore(player, card, targets) {
     player.addFlag('usedShaThisTurn', (player.flags.usedShaThisTurn || 0) + 1);
   }
 
-  // 无懈可击检查（锦囊）
+  // 无懈可击检查（锦囊；「星神赐福」不能被无懈，见下）
   if (def.type === 'trick' && !def.respondOnly) {
     const nullified = await this.checkWuxie(player, card, targets);
     if (nullified) {
       this.log(`【${card.fullname}】被【无懈可击】抵消`);
-      this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
+      /* 【闪闪】当无懈用掉时，抵消者获得被抵消的牌 */
+      if (card._ssTaker && card._ssTaker.alive) {
+        await card._ssTaker.gain([card], 'gain2');
+      } else {
+        this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
+      }
       return;
     }
+  }
+
+  /* 【金蝉脱壳】：目标可以弃置此牌令该牌对自己无效（不是无懈，无法被反制） */
+  targets = await this.filterJinchan(player, card, targets);
+  if (!targets || !targets.length) {
+    this.log(`【${card.fullname}】的目标全部消失，结算结束`);
+    this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
+    this.emit();
+    return;
+  }
+
+  /*
+   * 【IX】—— 对一张正在结算的牌使用，令其无效。
+   * 「星神赐福」不能被【无懈可击】抵消，但可以被 IX 压掉；
+   * 被 IX 压掉的赐福牌，其目标仍然算「成为过星神赐福的目标」。
+   */
+  if (await this.askIX(player, card, targets)) {
+    this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
+    this.emit();
+    return;
+  }
+
+  /* 【迷思】：目标可以扣置并声明牌名，被质疑时按真假结算 */
+  let misiExtra = 0;
+  if (player.flags && player.flags.misiTimes) {
+    const r = await this.misiDeclare(player, card);
+    misiExtra = r.extra || 0;
   }
 
   // 结算
@@ -376,9 +438,45 @@ async useCardCore(player, card, targets) {
     case 'jiu': await this.resolveJiu(player); return;
     case 'huogong': await this.resolveHuogong(player, targets); break;
     case 'tiesuo': await this.resolveTiesuo(player, targets); break;
+    /* ---------- 扩展牌（四副牌堆） ---------- */
+    case 'zhujin': await this.resolveZhujin(player, targets); break;
+    case 'dongzhu': await this.resolveDongzhu(player); break;
+    case 'zengbing': await this.resolveZengbing(player, targets); break;
+    case 'shushangkaihua': await this.resolveShushangkaihua(player); break;
+    case 'shuiyan': await this.resolveShuiyan(player, targets); break;
+    case 'xieling': await this.resolveXieling(player); break;
+    case 'shezhan': await this.resolveShezhan(player); break;
+    case 'diaobing': await this.resolveDiaobing(player); break;
+    case 'chuqi': await this.resolveChuqi(player, targets); break;
+    case 'huoshaolianying': await this.resolveHuoshaolianying(player); break;
+    case 'yuanjiao': await this.resolveYuanjiao(player); break;
+    /* ---------- 轮换牌（卡包） ---------- */
+    case 'hanmenzhi': await this.resolveHanmenzhi(player); break;
+    case 'zhengshangji': await this.resolveZhengshangji(player); break;
+    case 'yuliangyi': await this.resolveYuliangyi(player, targets[0]); break;
+    case 'fulei': await this.addJudgeCard(player, card); return;
     default:
       if (def.type === 'equip') { await this.equipCard(player, card); return; }
+      if (def.type === 'blessing') { await this.resolveBlessing(player, card, targets); return; }
       break;
+  }
+
+  /* 【迷思】声明成功时额外结算一次 */
+  if (misiExtra > 0) {
+    this.log(`【迷思】${card.fullname} 额外结算一次`);
+    switch (card.name) {
+      case 'sha': await this.resolveSha(player, card, targets); break;
+      case 'juedou': await this.resolveJuedou(player, targets); break;
+      case 'guohe': await this.resolveGuohe(player, targets); break;
+      case 'shunshou': await this.resolveShunshou(player, targets); break;
+      case 'huogong': await this.resolveHuogong(player, targets); break;
+      default: break;
+    }
+  }
+  /* 【迷思】被质疑且声明不符 → 质疑者摸一张 */
+  if (this._misiDrawAfter && this._misiDrawAfter.alive) {
+    await this._misiDrawAfter.draw(1);
+    this._misiDrawAfter = null;
   }
 
   this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
@@ -639,6 +737,9 @@ async equipCard(player, card) {
     player.equips[sub] = null;
     this.toDiscard(old);
     old.zone = 'discard';
+    // 【白银狮子】/【天机图】离开装备区时的效果
+    await this.checkBaiyinLose(player, old);
+    await this.checkTianjiLose(player, old);
   }
 
   // 从「其他区域」移除这张牌，避免同一张牌同时存在于多处。
@@ -662,6 +763,24 @@ async equipCard(player, card) {
   card.owner = player;
   this.log(`${player.name} 装备了【${card.fullname}】`);
   this.emit();
+
+  /*
+   * 【天机图】进入装备区：必须弃置一张「其他」牌。
+   * 若除了天机图之外没有别的牌，则可以弃置 0 张。
+   */
+  if (card.name === 'tianjitu') {
+    const others = player.getCards('he').filter((c) => c !== card);
+    if (others.length) {
+      const picked = await player.chooseCards({
+        prompt: '【天机图】：弃置一张其他牌',
+        position: 'he', min: 1, max: 1, cancelable: false,
+        filter: (c) => c !== card,
+      });
+      if (picked && picked.length) await player.discard(picked);
+    } else {
+      this.log(`${player.name} 除【天机图】外没有其他牌，无需弃置`);
+    }
+  }
   return true;
 },
 
@@ -672,6 +791,11 @@ _removeFromPiles(card) {
   if (ci >= 0) this.centerZone.splice(ci, 1);
 },
 
+/* ============================================================
+ * 【无懈可击】/【闪闪】询问
+ * ------------------------------------------------------------
+ * 【闪闪】可以当【无懈可击】打出，且抵消成功后**获得被抵消的牌**。
+ * ============================================================ */
 async checkWuxie(source, card, targets) {
   let nullified = false;
   let guard = 0;
@@ -682,7 +806,7 @@ async checkWuxie(source, card, targets) {
     let someone = false;
     for (const p of this.players) {
       if (!p.alive) continue;
-      const wuxies = p.getCards('he', (c) => c.name === 'wuxie');
+      const wuxies = p.getCards('he', (c) => c.name === 'wuxie' || c.name === 'shanshan');
       if (!wuxies.length) continue;
 
       // 目标描述：无懈的目标是「牌」而非角色
@@ -701,10 +825,11 @@ async checkWuxie(source, card, targets) {
         picked = (await this.io.chooseCards(p, {
           prompt: `打出【无懈可击】抵消【${targetCard.fullname}】`,
           position: 'he', min: 1, max: 1,
-          filter: (c) => c.name === 'wuxie', cancelable: true,
+          filter: (c) => c.name === 'wuxie' || c.name === 'shanshan', cancelable: true,
         })) || [];
       } else {
-        picked = [wuxies[0]];
+        // 优先用真【无懈可击】，【闪闪】留作底牌
+        picked = [wuxies.slice().sort((a, b) => (a.name === 'wuxie' ? -1 : 1) - (b.name === 'wuxie' ? -1 : 1))[0]];
       }
       if (!picked.length) continue;
 
@@ -713,7 +838,13 @@ async checkWuxie(source, card, targets) {
 
       const wuxieCard = picked[0];
       wuxieChain.push(wuxieCard);
+      const before = nullified;
       nullified = !nullified;
+      // 【闪闪】：抵消成功后获得被抵消的牌
+      if (!before && nullified && wuxieCard.name === 'shanshan') {
+        card._ssTaker = p;
+        this.log(`【闪闪】令 ${p.name} 获得了 ${targetCard.text}`);
+      }
 
       // 归类为「打出」，并记录其目标为「牌」
       await this.emitCardResponded(p, wuxieCard, 'wuxie');

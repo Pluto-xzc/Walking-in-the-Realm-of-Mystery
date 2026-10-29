@@ -51,6 +51,15 @@ export class Player {
      */
     this.hasHiddenSkill = ch.skills.some(
       (sid) => SKILLS[sid] && SKILLS[sid].hiddenSkill === true);
+    /*
+     * 【命运回合】声明式授予
+     * ------------------------------------------------------------------
+     * 技能用 `mod: { destinyTurn: true }` 声明「拥有命运回合」，
+     * 构造角色时直接落地，免去每个武将单独写初始化代码。
+     */
+    this.destinyTurn = ch.skills.some(
+      (sid) => SKILLS[sid] && SKILLS[sid].mod && SKILLS[sid].mod.destinyTurn === true);
+
     this.hand = [];
     this.equips = makeEmptyEquips();
     /**

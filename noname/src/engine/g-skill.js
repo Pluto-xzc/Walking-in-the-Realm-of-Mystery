@@ -7,7 +7,7 @@
 
 import { CARDS } from '../cards.js';
 import { SKILLS } from '../skills.js';
-import { tryResetAngyang, markAngyangUsed, isDetached, checkCombo, markQidingUsed, tryZhuanYun, cannotBlockTriggerSkill } from '../mechanics.js';
+import { tryResetAngyang, markAngyangUsed, isDetached, checkCombo, markQidingUsed, tryZhuanYun, cannotBlockTriggerSkill, enterSettlement, exitSettlement } from '../mechanics.js';
 
 export default {
 skillScopeMatches(skill, owner, event) {
@@ -171,7 +171,12 @@ async checkSkills(timing, event) {
       const willUse = await this.io.askSkill(p, sk, ctx);
       if (willUse) {
         this.log(`${p.name} 发动【${sk.name}】`);
-        await sk.content(ctx);
+        enterSettlement(this);          // 【破惘长行】以「一次技能发动」为界
+        try {
+          await sk.content(ctx);
+        } finally {
+          exitSettlement(this);
+        }
         // 昂扬技：发动后进入「已用」状态
         if (sk.angyang) markAngyangUsed(p, sid);
 
@@ -268,6 +273,13 @@ canBeTargeted(player, card) {
   // 谦逊：不能成为【顺手牵羊】和【乐不思蜀】的目标
   if (player.hasSkill('qianxun')
     && (card.name === 'shunshou' || card.name === 'lebu')) return false;
+  /*
+   * 【星神赐福】目标限制（需求方给定）：
+   * 「本局未受星神赐福的角色」才能成为赐福牌的目标。
+   * 【IX】【希佩】是对牌 / 伤害响应用的，不按角色目标限制。
+   */
+  const cdef = CARDS[card.name];
+  if (cdef && cdef.needUnblessed && player.flags && player.flags.blessedThisGame) return false;
   return true;
 },
 
@@ -277,22 +289,27 @@ shaUnlimited(player) {
 },
 
 canUseAsFireSha(player) {
-  // 装备技能
+  return (this.elementShaOptions(player) || []).includes('fire');
+},
+
+/**
+ * 属性杀可选的属性列表（朱雀羽扇：火 / 雷）
+ * 返回 [] 表示不能改属性。
+ */
+elementShaOptions(player) {
+  const out = new Set();
+  const consider = (sk) => {
+    if (sk && sk.mod && sk.mod.elementShaOptions) {
+      const list = sk.mod.elementShaOptions(player);
+      if (Array.isArray(list)) list.forEach((n) => out.add(n));
+    }
+    if (sk && sk.mod && sk.mod.canUseAsFireSha && sk.mod.canUseAsFireSha(player)) out.add('fire');
+  };
   for (const c of Object.values(player.equips).filter(Boolean)) {
-    const esid = CARDS[c.name] && CARDS[c.name].equipSkill;
-    const sk = esid && SKILLS[esid];
-    if (sk && sk.mod && sk.mod.canUseAsFireSha && sk.mod.canUseAsFireSha(player)) {
-      return true;
-    }
+    consider(SKILLS[CARDS[c.name] && CARDS[c.name].equipSkill]);
   }
-  // 武将技能
-  for (const sid of player.skills) {
-    const sk = SKILLS[sid];
-    if (sk && sk.mod && sk.mod.canUseAsFireSha && sk.mod.canUseAsFireSha(player)) {
-      return true;
-    }
-  }
-  return false;
+  for (const sid of player.skills) consider(SKILLS[sid]);
+  return [...out];
 },
 
 trickNoDistance(player) {
