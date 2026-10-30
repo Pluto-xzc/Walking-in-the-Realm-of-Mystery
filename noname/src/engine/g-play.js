@@ -319,6 +319,8 @@ async useCardCore(player, card, targets) {
   // 移除实体牌，并置入中央区（本回合处理区）
   // 中央区的牌同时算作弃牌堆的一部分，回合结束后归档。
   if (card.sourceCards && card.sourceCards.length) {
+    // 【毒】「被转化牌而离开手牌区」→ 标记后才能触发失去体力
+    for (const s of card.sourceCards) s._leavingAsSource = true;
     await player.loseCards(card.sourceCards);
     this.toCenter(card.sourceCards);
   } else if (player.getCards('he').includes(card)) {

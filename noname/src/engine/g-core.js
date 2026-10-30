@@ -6,6 +6,7 @@
  */
 
 import { DECK_LIST, CARDS } from '../cards.js';
+import { CHARACTERS } from '../characters.js';
 import { applyRotation } from '../mechanics/rotation.js';
 import { noteIgnitedDiscard, isIgnited, addToRenku, renkuCards, noteHpChange, isHidden, enterHidden, cannotRespond } from '../mechanics.js';
 import { ZONE } from './zones.js';
@@ -196,6 +197,8 @@ revealCards(cards, by = null) {
   for (const c of this._asCardList(cards)) {
     if (!c) continue;
     c.setRevealed(true, by || c.owner);
+    // 记下明置发生在哪一回合（【雾生雪】：明置的牌在明置的回合内视为【毒】）
+    c.revealTurn = this.turnCount;
   }
   this.emit();
 },
@@ -256,6 +259,15 @@ setup(playerChars, io, ai) {
     return p;
   });
   this.buildDeck();
+
+  // 武将自带的初始护甲（例：小早川时一 2 点）
+  for (const p of this.players) {
+    const ch = CHARACTERS[p.charId];
+    if (ch && ch.hujia > 0) {
+      p.hujia = ch.hujia;
+      p.maxHujia = ch.hujia;
+    }
+  }
 
   /*
    * 【隐匿技】游戏开始时进入隐匿

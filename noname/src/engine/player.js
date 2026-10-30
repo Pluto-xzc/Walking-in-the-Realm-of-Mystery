@@ -11,7 +11,7 @@ import {
   invalidateRevealed, isLinkedCard, cascadeDiscardLinked, cascadeGainLinked,
   isIgnited, noteIgnitedDiscard, applyEnchantMod, noteHpChange, cannotRespond,
   isInquirySkipped, SKIP_KINDS, OCCUPY_ZONES, occupierOf, isDetached,
-  adjustBigChange,
+  adjustBigChange, onHandLeave, isPoisonNow, leavesFaceUp,
 } from '../mechanics.js';
 import { nextId, ZONE } from './zones.js';
 
@@ -336,7 +336,27 @@ export class Player {
      *（「被放入木牛流马」也算失去），因此这里统一清除。
      */
     invalidateRevealed(cards);
-    return this.game.playerGain(this, cards, from);
+    const r = await this.game.playerGain(this, cards, from);
+    /*
+     * 【自囚者】被标记期间，每次获得牌都要明置其中一张。
+     * 标记会在「下次流失体力」时由 loseHp 清掉。
+     */
+    if (this.flags && this.flags.ziqiuActive && this.alive && (cards || []).length) {
+      const pool = this.getCards('h', (c) => (cards || []).includes(c) && !c.revealed);
+      const pick = pool.length
+        ? await this.chooseCards({
+          prompt: '【自囚者】：从获得的牌里选一张明置',
+          position: 'h', min: 1, max: 1, cardList: pool, cancelable: false,
+        }).catch(() => null)
+        : null;
+      const card = (pick && pick[0]) || pool[0];
+      if (card) {
+        card.revealTurn = this.game.turnCount;
+        await this.game.revealCards([card], this);
+        this.game.log(`【自囚者】${this.name} 明置了 ${card.fullname || card.name}`);
+      }
+    }
+    return r;
   }
 
   /** 【破惘长行】把「摸牌」反向改成「弃 1 张手牌」 */
@@ -468,6 +488,15 @@ export class Player {
      * 【横置】同理：牌一旦离开手牌，横置状态也就不再有意义
      *（需求方规则里的横置只在「手牌中」成立）。
      */
+    /*
+     * 【毒】的快照必须在 invalidateRevealed 之前取。
+     * 「正面朝上或作为转化牌离开手牌区」都会失去 1 点体力，
+     * 而 invalidateRevealed 会把 revealed 清掉，之后就无法判断了。
+     */
+    const poisonLeaving = (cards || []).filter(
+      (c) => c && this.hand.includes(c) && isPoisonNow(this.game, c) && leavesFaceUp(c),
+    );
+
     invalidateRevealed(cards);
     for (const c of (cards || [])) {
       if (c && c.horizontal) delete c.horizontal;
@@ -510,6 +539,8 @@ export class Player {
     if (this.hand.length === 0) {
       await this.game.checkSkills('handCardLost', { player: this });
     }
+    // 【毒】正面离开手牌区 → 失去体力
+    if (poisonLeaving.length) await onHandLeave(this.game, this, poisonLeaving);
   }
 
   async discard(cards) {
@@ -720,6 +751,8 @@ export class Player {
     this.hp -= num;
     this.game.log(`${this.name} 失去了 ${num} 点体力（${this.hp}/${this.maxHp}）`);
     this.game.emit();
+    // 【自囚者】「直到下次流失体力前」——流失体力即解除标记
+    if (this.flags && this.flags.ziqiuActive) this.flags.ziqiuActive = false;
     // 【体力变化】记录（失去体力）
     if (this.game.noteHpChange) {
       this.game.noteHpChange(this, 'lose', num, before);
