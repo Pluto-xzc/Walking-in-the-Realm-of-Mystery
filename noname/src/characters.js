@@ -56,6 +56,12 @@ export const GROUPS = {
    * 「光启新篇」包的势力标识。
    */
   ao: { key: 'ao', label: '奥', color: '#6f7fbf' },
+  /**
+   * 冠（冠位指定）
+   * ------------------------------------------------------------------
+   * 「冠位指定」包的势力标识。
+   */
+  guan: { key: 'guan', label: '冠', color: '#b8912f' },
 };
 
 /**
@@ -117,6 +123,17 @@ export const PACKS = {
     label: '光启新篇',
     color: '#6f7fbf',
     group: 'ao',
+  },
+  /**
+   * 冠位指定
+   * ------------------------------------------------------------------
+   * 理查一世所属的扩展包。势力为「冠」。
+   */
+  guanwei: {
+    key: 'guanwei',
+    label: '冠位指定',
+    color: '#b8912f',
+    group: 'guan',
   },
 };
 
@@ -391,6 +408,23 @@ export const CHARACTERS = {
     pack: 'guangqi',
     skills: ['buxiujixing', 'buxiujixing_round', 'buxiujixing_shang',
       'mingyuntongxin_xiu', 'mingyuntongxin_xiu_huan', 'mingyuntongxin_xiu_fail'],
+  },
+
+  /* ========================= 冠位指定 (1) ========================= */
+  /**
+   * 理查一世 4/4、0 护甲，男，称号「狮心王理查」，势力「冠」，分类「冠位指定」。
+   *
+   * 技能一：Excalibur(伪)（锁定技 + 主动技）
+   *   · 永续部分（excalibur_yongxu）：武器栏废除、攻击范围 +1。
+   *   · 主动部分（excalibur）：出牌阶段选一张伤害类牌 → 熔铸花色不同的手牌
+   *     → 按熔铸的花色种类数重复选效果 → 结算。
+   * 技能二：百般骥足（即时牌结算后弃牌 + 声明花色 + 判定）
+   */
+  lichayishi: {
+    id: 'lichayishi', name: '理查一世', title: '狮心王理查',
+    sex: 'male', group: 'guan', hp: 4, maxHp: 4,
+    pack: 'guanwei',
+    skills: ['excalibur', 'excalibur_yongxu', 'baibanjizu'],
   },
 
   /* ========================= 梦想协奏 (2) ========================= */
