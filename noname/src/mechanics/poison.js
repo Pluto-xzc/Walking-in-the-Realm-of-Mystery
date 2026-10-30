@@ -12,14 +12,27 @@
 export const POISON = 'du';
 
 /**
+ * 场上是否有【雾生雪】（小早川时一）。
+ * ------------------------------------------------------------------
+ * 「明置的牌视为【毒】」是**雾生雪的锁定技效果**，不是全局规则：
+ * 没有小早川时一时，明置的牌不该变成毒。
+ * 历史 bug：曾经无条件生效，导致娜塔莎对局里明置的牌离开手牌
+ * 就掉血、直接把自己掉死。
+ */
+export function hasWushengxue(game) {
+  return !!game && game.players.some((p) => p.alive && p.skills && p.skills.includes('wushengxue'));
+}
+
+/**
  * 这张牌此刻是否「视为毒」。
  * ① 它本身是【毒】；
- * ② 它是本回合刚被明置的牌（【雾生雪】锁定技）。
+ * ② 它是本回合刚被明置的牌（【雾生雪】锁定技 —— 需要有该技能在场）。
  */
 export function isPoisonNow(game, card) {
   if (!card) return false;
   if (card.name === POISON) return true;
-  return !!card.revealed && card.revealTurn === game.turnCount;
+  if (!card.revealed || card.revealTurn !== game.turnCount) return false;
+  return hasWushengxue(game);
 }
 
 /**
