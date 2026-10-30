@@ -521,10 +521,30 @@ checkCardUsable(player, card, game) {
       };
     }
 
-    default:
-      // 装备牌：直接装备
+    default: {
       if (def.type === 'equip') return { ok: true };
+      /*
+       * 未逐一列举的牌，按牌面声明的字段决定要不要选目标
+       * --------------------------------------------------------------
+       * 以前这里直接 `return { ok: true }`，于是所有新牌
+       * （洞烛先机/树上开花/逐近弃远/增兵减灶/水淹七军/出其不意…）
+       * 都以「没有目标」交给引擎，引擎再把它们当成
+       * 「目标全部消失」直接丢掉 —— 表现就是「用了没效果」。
+       */
+      if (def.selfOnly) return { ok: true, autoTargets: [player] };
+      if (def.allPlayers) return { ok: true };
+      if (def.selectTarget) {
+        const cands = g.players.filter((p) => p.alive
+          && !(def.notSelf && p === player)
+          && game.canBeTargeted(p, card));
+        if (!cands.length) return { ok: false, reason: '没有可选目标' };
+        return {
+          ok: true, needTargets: cands, targetMin: 1, targetMax: 1,
+          targetPrompt: `【${def.fullname}】请选择目标`,
+        };
+      }
       return { ok: true };
+    }
   }
 }
 };

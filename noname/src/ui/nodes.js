@@ -183,8 +183,6 @@ toggleTarget(p) {
   } else {
     if (this.selectedTargets.length >= this.targetMax) return;
     this.selectedTargets.push(p);
-    // 黄色指向线：从当前选定的牌（没有则从自己）连到刚点中的目标
-    this.showSelectLine(p);
   }
   this.renderSelectionState();
 },

@@ -109,15 +109,6 @@ export default {
     });
   },
 
-  /** 选目标过程中每次点中一名角色，就从「当前选定的牌 / 自己」连一条线 */
-  showSelectLine(target) {
-    const fromEl = document.querySelector('#sgs-self-hand .sgs-card.selected')
-      || document.getElementById('sgs-self-avatar')
-      || document.getElementById('sgs-self');
-    const toEl = this.nodeOfPlayer(target);
-    if (fromEl && toEl && fromEl !== toEl) this.showTargetLine(fromEl, toEl);
-  },
-
   /** 玩家 → DOM 节点 */
   nodeOfPlayer(p) {
     if (!p) return null;
