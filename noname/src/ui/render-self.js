@@ -253,6 +253,16 @@ renderEquipSlots(me) {
       node.classList.add('slot-card');
       cell.appendChild(node);
       cell.title = `${card.fullname}：${CARDS[card.name] ? CARDS[card.name].desc : ''}`;
+      /*
+       * 整格都能右键。
+       * 缩小版卡面只占格子的一部分，点「武器」标签或格子留白时
+       * 事件落不到 .sgs-card 上，会弹出浏览器原生菜单。
+       */
+      cell.oncontextmenu = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.showCardDetail(card, ev);
+      };
     } else {
       const ph = el('div', 'sgs-equip-empty', '空');
       cell.appendChild(ph);
@@ -366,6 +376,22 @@ buildCardNode(card, owner, isEquip) {
   };
 
   if (isEquip) node.classList.add('is-equip');
+
+  /*
+   * 手牌里的装备牌标出所属槽位。
+   * 需求：手里的装备要一眼看得出「装上会占哪个格子」，
+   * 否则不知道该不该打出去。
+   */
+  const def = CARDS[card.name];
+  if (def && def.type === 'equip' && !isEquip) {
+    const slot = EQUIP_SLOTS.find((s) => s.key === def.subtype);
+    if (slot) {
+      const tag = el('span', 'sgs-card-tag slot-tag', slot.label);
+      tag.title = `装备后进入「${slot.label}」栏`;
+      node.appendChild(tag);
+      node.classList.add('is-equip-card');
+    }
+  }
 
   /*
    * ---- 本扩机制的可视化标记 ----

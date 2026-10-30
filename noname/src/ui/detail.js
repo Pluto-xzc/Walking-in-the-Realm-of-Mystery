@@ -17,12 +17,18 @@
 
 
 /* === 依赖（由 tools/fix_ui_imports.cjs 生成）=== */
-import { CARDS, EQUIP_SLOT_MAP, SUITS } from '../cards.js';
+import { CARDS, EQUIP_SLOT_MAP, SUITS, numberLabel } from '../cards.js';
 import { GROUPS } from '../characters.js';
 import { SKILLS } from '../skills.js';
 import { IDENTITY_LABEL } from '../match.js';
 import { $, el } from '../ui-helpers.js';
 import { skillDesc } from '../skills-util.js';
+
+/* 区域 key → 中文名（详情浮层用） */
+const ZONE_LABEL = {
+  hand: '手牌', equip: '装备区', judge: '判定区', xumou: '蓄谋区',
+  discard: '弃牌堆', deck: '牌堆', move: '移动中',
+};
 
 export default {
 
@@ -253,7 +259,7 @@ showCardDetail(card, ev) {
     `类别：${typeText}${subText ? ' · ' + subText : ''}`,
     natureText ? `属性：${natureText}` : '',
     def.attackRange ? `攻击范围：${def.attackRange}` : '',
-    card.zone ? `所在区域：${card.zone}` : '',
+    card.zone ? `所在区域：${ZONE_LABEL[card.zone] || card.zone}` : '',
   ].filter(Boolean).join('　');
   const html = `
     <div class="dp-title">${card.fullname || def.fullname || card.name}</div>
