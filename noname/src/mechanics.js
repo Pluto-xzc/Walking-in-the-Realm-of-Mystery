@@ -43,6 +43,7 @@ export * from './mechanics/yunlv.js';
 export * from './mechanics/convert.js';
 export * from './mechanics/occupy.js';
 export * from './mechanics/change.js';
+export * from './mechanics/poison.js';
 
 /*
  * default 导出：历史上 mechanics.js 的默认导出是一个包含全部函数的大对象，

@@ -62,6 +62,11 @@ export const GROUPS = {
    * 「冠位指定」包的势力标识。
    */
   guan: { key: 'guan', label: '冠', color: '#b8912f' },
+  /*
+   * 宙（= 宙埃之世）
+   * ⚠️ 不能复用上面的 `zhou`（那是「舟」），所以 key 用 `zhoue`。
+   */
+  zhoue: { key: 'zhoue', label: '宙', color: '#4fb3c8' },
 };
 
 /**
@@ -130,10 +135,15 @@ export const PACKS = {
    * 理查一世所属的扩展包。势力为「冠」。
    */
   guanwei: {
-    key: 'guanwei',
-    label: '冠位指定',
+    key: 'guanwei',    label: '冠位指定',
     color: '#b8912f',
     group: 'guan',
+  },
+  zhouai: {
+    key: 'zhouai',
+    label: '宙埃之世',
+    color: '#4fb3c8',
+    group: 'zhoue',
   },
 };
 
@@ -425,6 +435,21 @@ export const CHARACTERS = {
     sex: 'male', group: 'guan', hp: 4, maxHp: 4,
     pack: 'guanwei',
     skills: ['excalibur', 'excalibur_yongxu', 'baibanjizu'],
+  },
+
+  /* ========================= 宙埃之世 (1) ========================= */
+  /**
+   * 小早川时一 3/4（体力上限 4、开局 3 血）、2 护甲，势力「宙」，分类「宙埃之世」。
+   *
+   * 技能一：雾生雪（锁定技）—— 明置的牌本回合视为【毒】；
+   *         有角色每回合首次使用转化牌结算后，其二选一。
+   * 技能二：自囚者 —— 有人摸牌后可令其获得牌时明置一张。
+   */
+  xiaozaochuanshiyi: {
+    id: 'xiaozaochuanshiyi', name: '小早川时一', title: '白芒的人生',
+    sex: 'female', group: 'zhoue', hp: 3, maxHp: 4, hujia: 2,
+    pack: 'zhouai',
+    skills: ['wushengxue', 'wushengxue_reveal', 'ziqiuzhe'],
   },
 
   /* ========================= 梦想协奏 (2) ========================= */

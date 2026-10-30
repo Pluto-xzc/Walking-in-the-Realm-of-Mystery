@@ -19,10 +19,11 @@ import mo from './skills/table-mo.js';
 import ao from './skills/table-ao.js';
 import tongbao from './skills/table-tongbao.js';
 import guan from './skills/table-guan.js';
+import zhoue from './skills/table-zhou.js';
 
 /* 七张表合成同一个 SKILLS 对象：合并顺序不影响语义（键名互不重叠）。 */
 export const SKILLS = {
-  ...standard, ...equip, ...expansion, ...mo, ...ao, ...tongbao, ...guan,
+  ...standard, ...equip, ...expansion, ...mo, ...ao, ...tongbao, ...guan, ...zhoue,
 };
 
 export { canBeishuiNow, consumeBeishui, askBeishui, qinjianOptions } from './skills/beishui.js';

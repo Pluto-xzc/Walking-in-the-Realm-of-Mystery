@@ -1859,6 +1859,16 @@ html, body {
 .sgs-card-tag.revealed { top: 2px; left: 2px; background: #2f8f7a; }
 .sgs-card-tag.horizontal { top: 2px; right: 2px; background: #c07a1e; }
 
+/* 手牌里的装备牌：右下角标出装上之后会占哪个装备栏 */
+.sgs-card-tag.slot-tag {
+  bottom: 2px;
+  right: 2px;
+  background: #6b5a2e;
+  border: 1px solid rgba(212, 160, 23, 0.65);
+  color: var(--gold-light);
+}
+.sgs-card.is-equip-card { border-color: rgba(212, 160, 23, 0.5); }
+
 /* 明置的牌加一圈青光，便于一眼看出内容是公开的 */
 .sgs-card.is-revealed {
   box-shadow: 0 0 0 2px rgba(47, 143, 122, 0.75);
