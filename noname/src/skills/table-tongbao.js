@@ -40,11 +40,16 @@ export default {
       /*
        * 注意引擎的调用签名是 damageModify(num, ev, owner)；不是 (player, num, ctx)。
        * 「每回合首张被使用的红色牌」用 owner.flags 记录，flags 每回合自动清空。
+       *
+       * 只减「打到装备者身上」的伤害。引擎会把装备技分别以 target / source 两种角色
+       * 收进候选（他人打你、你打别人都会轮到它），所以这里必须自己卡住：
+       * 需求方 m08271 指出，原来没卡条件，导致自己使用红牌造成的伤害也被 -1。
        */
       damageModify: (num, ev, owner) => {
-        if (!ev || !ev.card) return num;
+        if (!ev || !owner) return num;
+        if (ev.player !== owner) return num;      // 只有自己挨打才减
+        if (!ev.card || ev.card.color !== 'red') return num;
         if (owner.flags && owner.flags.hanreUsed) return num;
-        if (ev.card.color !== 'red') return num;
         owner.flags = owner.flags || {};
         owner.flags.hanreUsed = true;
         return Math.max(0, num - 1);
