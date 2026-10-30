@@ -67,6 +67,12 @@ export const GROUPS = {
    * ⚠️ 不能复用上面的 `zhou`（那是「舟」），所以 key 用 `zhoue`。
    */
   zhoue: { key: 'zhoue', label: '宙', color: '#4fb3c8' },
+  /**
+   * 星（星际开拓）
+   * ------------------------------------------------------------------
+   * 「星际开拓」包的势力标识。
+   */
+  xing: { key: 'xing', label: '星', color: '#3f8f7a' },
 };
 
 /**
@@ -144,6 +150,17 @@ export const PACKS = {
     label: '宙埃之世',
     color: '#4fb3c8',
     group: 'zhoue',
+  },
+  /**
+   * 星际开拓
+   * ------------------------------------------------------------------
+   * 娜塔莎所属的扩展包。势力为「星」。
+   */
+  xingji: {
+    key: 'xingji',
+    label: '星际开拓',
+    color: '#3f8f7a',
+    group: 'xing',
   },
 };
 
@@ -450,6 +467,21 @@ export const CHARACTERS = {
     sex: 'female', group: 'zhoue', hp: 3, maxHp: 4, hujia: 2,
     pack: 'zhouai',
     skills: ['wushengxue', 'wushengxue_reveal', 'ziqiuzhe'],
+  },
+
+  /* ========================= 星际开拓 (1) ========================= */
+  /**
+   * 娜塔莎 3/4（体力上限 4、开局 3 血）、0 护甲，势力「星」。
+   *
+   * 技能一：爱，救护与抉择 —— 回合开始时可让当前回合角色交牌，
+   *         换来其本回合前三张的「同色无次数限制 / 异花色各摸一张」。
+   * 技能二：仁慈的背面 —— 受伤后看牌堆顶一张，把手牌当作那张牌使用。
+   */
+  natasha: {
+    id: 'natasha', name: '娜塔莎', title: '医者仁心',
+    sex: 'female', group: 'xing', hp: 3, maxHp: 4,
+    pack: 'xingji',
+    skills: ['aijihuyujueze', 'rencidibeimian'],
   },
 
   /* ========================= 梦想协奏 (2) ========================= */

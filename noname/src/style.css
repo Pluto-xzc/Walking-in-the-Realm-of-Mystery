@@ -1532,6 +1532,11 @@ html, body {
   position: fixed;
   z-index: 60000;
   max-width: 320px;
+  /* 内容一多（技能 + 装备 + 判定区 + 明置…）会超出屏幕，
+     之前没有滚动条，超出的部分直接被裁掉 —— 这就是「看不见装备效果」的原因。 */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 14px;
   background: rgba(18, 14, 11, 0.98);
   border: 1px solid rgba(212, 160, 23, 0.55);
@@ -1857,6 +1862,7 @@ html, body {
 }
 /* 明置角标放左上，横置角标放右上，叠加时不会互相遮挡 */
 .sgs-card-tag.revealed { top: 2px; left: 2px; background: #2f8f7a; }
+.sgs-card-tag.reveal-tag { top: 2px; left: 2px; background: #2f8f7a; }
 .sgs-card-tag.horizontal { top: 2px; right: 2px; background: #c07a1e; }
 
 /* 手牌里的装备牌：右下角标出装上之后会占哪个装备栏 */
@@ -1883,6 +1889,12 @@ html, body {
 .sgs-detail-pop .dp-horizontal { color: #e0b070; }
 .sgs-detail-pop .dp-xumou { color: #b98ad4; }
 .sgs-detail-pop .dp-xumou.dim { color: #8a7d6b; font-style: italic; }
+/* 装备区：逐张列效果（右键角色时看） */
+.sgs-detail-pop .dp-equips { color: #d8cbb0; }
+.sgs-detail-pop .dp-equip { margin-bottom: 6px; line-height: 1.5; }
+.sgs-detail-pop .dp-equip:last-child { margin-bottom: 0; }
+.sgs-detail-pop .dp-equip b { color: #e8c877; }
+.sgs-detail-pop .dp-equip-slot { color: #9d9078; }
 
 /* ------------------------------------------------------------------
    【隐匿】状态：武将牌、体力、性别都不可见
