@@ -144,9 +144,9 @@ showPlayerDetail(player, ev) {
 
   /* ---- 明置牌（本扩机制）---- */
   /*
-   * 需求方要求：查看角色的明置牌走「右键武将查看信息」，
-   * 把当前明置牌的信息放在这里。
-   * 明置是**持续公开**的信息，因此不论谁看都能看到内容。
+   * 需求方 m09431：
+   *   明置的「标记」由**手牌角标**承担（见 render-self.js 的 reveal-tag），
+   *   这里只按名字列出是哪几张，**不再**给每张加「（明置）」标记。
    */
   const revealed = (player.hand || []).filter((c) => c && c.revealed);
   if (revealed.length) {
@@ -169,8 +169,7 @@ showPlayerDetail(player, ev) {
   if (horiz.length) {
     const isOwner = me === player;
     if (isOwner) {
-      const list = horiz.map((c) => `${c.text}${c.revealed ? '（明置）' : ''}`)
-        .join('、');
+      const list = horiz.map((c) => c.text).join('、');
       html += `<div class="dp-sec">横置牌（${horiz.length} 张）</div>`
         + `<div class="dp-desc dp-horizontal">${list}</div>`;
     } else {
@@ -224,6 +223,32 @@ showPlayerDetail(player, ev) {
   if (player.destinyTurn) {
     html += `<div class="dp-sec">命运回合</div>`
       + `<div class="dp-desc">拥有命运回合（轮次结束前额外执行一个回合）</div>`;
+  }
+
+  /* ---- 装备区 ---- */
+  /*
+   * 需求方反馈：右键别人武将牌看不到装备的**效果**。
+   * 这里逐张列出装备（按槽位顺序），并附上牌面描述，
+   * 效果文本与卡牌详情完全一致。
+   */
+  const eqs = Object.values(player.equips || {}).filter(Boolean);
+  if (eqs.length) {
+    const order = ['equip1', 'equip2', 'equip3', 'equip4', 'equip5'];
+    eqs.sort((a, b) => {
+      const da = CARDS[a.name] || {};
+      const db = CARDS[b.name] || {};
+      return order.indexOf(da.subtype) - order.indexOf(db.subtype);
+    });
+    const list = eqs.map((c) => {
+      const d = CARDS[c.name] || {};
+      const slot = (EQUIP_SLOT_MAP[d.subtype] || {}).label || '装备';
+      const range = d.attackRange ? `｜攻击范围 ${d.attackRange}` : '';
+      return `<div class="dp-equip"><b>${c.fullname || d.fullname || d.label || c.name}</b>`
+        + `<span class="dp-equip-slot">（${slot}${range}）</span><br>`
+        + `${(d.desc || '（暂无描述）').replace(/\n/g, '<br>')}</div>`;
+    }).join('');
+    html += `<div class="dp-sec">装备区（${eqs.length} 张）</div>`
+      + `<div class="dp-desc dp-equips">${list}</div>`;
   }
 
   /* ---- 判定区 ---- */

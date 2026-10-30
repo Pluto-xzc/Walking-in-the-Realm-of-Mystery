@@ -402,9 +402,13 @@ buildCardNode(card, owner, isEquip) {
     node.classList.add('is-horizontal');
     node.appendChild(el('span', 'sgs-card-tag horizontal', '横置'));
   }
+  /*
+   * 【明置】：手牌上**要**角标（需求方 m09431 明确：手牌保留明置标记）。
+   * 右键武将牌那边不再重复标 —— 那里有专门的「明置牌」一栏。
+   */
   if (card.revealed) {
     node.classList.add('is-revealed');
-    node.appendChild(el('span', 'sgs-card-tag revealed', '明置'));
+    node.appendChild(el('span', 'sgs-card-tag reveal-tag', '明置'));
   }
 
   // ---- 可点击状态判定 ----

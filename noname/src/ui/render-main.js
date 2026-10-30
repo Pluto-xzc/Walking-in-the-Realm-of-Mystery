@@ -440,16 +440,14 @@ collectTokens(p) {
   if (p.hasFlag('luoyi') === g.turnCount) {
     out.push({ label: '裸衣', icon: '💪', desc: '本回合【杀】和【决斗】伤害 +1' });
   }
-  // 明置的牌（若有）
-  const revealed = (p.hand || []).filter((c) => c.revealed);
-  if (revealed.length) {
-    out.push({
-      label: `明置 ×${revealed.length}`,
-      icon: '👁',
-      desc: '你有明置的手牌，其他角色可以看到：'
-        + revealed.map((c) => c.text).join('、'),
-    });
-  }
+  /*
+   * 明置的牌：**不再生成「明置 ×N」标记**（需求方 m09431）。
+   * 明置现在只有两处表现：
+   *   ① 手牌左上角的绿色「明置」角标（render-self.js 的 reveal-tag）
+   *   ② 右键武将牌 → 「明置牌」一栏列出是哪几张
+   * 历史：这里曾 push 一个 👁 标记，导致右键详情里多出一行
+   * 「标记：明置 ×N」，与②重复，因此删除。
+   */
   // 技能自带的 storage 标记（供未来武将使用）
   for (const sid of (p.skills || [])) {
     const st = p.storage[sid];
