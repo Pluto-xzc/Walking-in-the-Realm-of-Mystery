@@ -16,3 +16,4 @@ export * from './yunlv.js';
 export * from './convert.js';
 export * from './occupy.js';
 export * from './change.js';
+export * from './poison.js';
