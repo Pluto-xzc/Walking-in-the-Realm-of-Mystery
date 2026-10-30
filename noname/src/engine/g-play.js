@@ -7,7 +7,7 @@
 
 import { CARDS } from '../cards.js';
 import { noteSuitUsed } from '../skills.js';
-import { isIgnited, isDetached, enterSettlement, exitSettlement } from '../mechanics.js';
+import { isIgnited, isDetached, enterSettlement, exitSettlement, preachTicket } from '../mechanics.js';
 import { ZONE, EQUIP_SLOT_MAP_SHORT } from './zones.js';
 
 export default {
@@ -232,10 +232,24 @@ async useCardCore(player, card, targets) {
    * 另：技能可临时赋予「本回合无次数限制」（如【星火尽染寒】）。
    *     【点燃】的牌本身也**无次数限制**。
    */
+  /*
+   * 【爱，救护与抉择】领票
+   * ----------------------------------------------------------------
+   * 娜塔莎的捐献者本回合的前三张牌各领一张票：
+   *   free = 这张牌与他交出的牌**同颜色** → 本次不受次数限制
+   *   draw = 这张牌与他交出的牌**不同花色** → 结算后各摸一张
+   * 票挂在 card._preachTicket 上，结算完在函数末尾兑现。
+   */
+  if (!card._preachTicket) {
+    const ticket = preachTicket(this, player, card);
+    if (ticket) card._preachTicket = ticket;
+  }
+  const preachFree = !!(card._preachTicket && card._preachTicket.free);
+
   if (card.name === 'sha') {
     const ignitedFree = isIgnited(card);      // 【点燃】：无次数限制
     const inMyPlayPhase = this.isInPlayPhase(player);
-    if (inMyPlayPhase && !ignitedFree) {
+    if (inMyPlayPhase && !ignitedFree && !preachFree) {
       const used = player.flags.usedShaThisTurn || 0;
       const noLimit = this.shaUnlimited(player)
         || (player.flags && player.flags.shaNoLimitThisTurn);
@@ -362,10 +376,38 @@ async useCardCore(player, card, targets) {
     player.addFlag('usedShaThisTurn', (player.flags.usedShaThisTurn || 0) + 1);
   }
 
-  // 无懈可击检查（锦囊；「星神赐福」不能被无懈，见下）
+  /*
+   * 无懈可击检查（锦囊；「星神赐福」不能被无懈）
+   * ----------------------------------------------------------------
+   * 与无名杀一致：**逐目标**询问。
+   *   群体锦囊（五谷丰登/南蛮入侵/万箭齐发/调兵遣将/桃园结义…）
+   *   → 每名目标各问一次，被抵消的角色不参与结算；
+   *   无目标锦囊（无中生有/洞烛先机…）→ 只问一次，抵消就整张作废。
+   */
   if (def.type === 'trick' && !def.respondOnly) {
-    const nullified = await this.checkWuxie(player, card, targets);
-    if (nullified) {
+    const group = def.allPlayers ? this.players.filter((p) => p.alive)
+      : def.allOtherPlayers ? this.players.filter((p) => p.alive && p !== player)
+        : def.selfOnly ? [player]
+          : null;
+    const implicitTargets = (targets && targets.length) ? targets : group;
+    card.nullifiedTargets = new Set();
+
+    let nullifiedAll = false;
+    if (implicitTargets && implicitTargets.length) {
+      for (const t of implicitTargets) {
+        await this.checkWuxie(player, card, t);
+      }
+      const hit = implicitTargets.filter((t) => card.nullifiedTargets.has(t));
+      if (hit.length === implicitTargets.length) {
+        nullifiedAll = true;
+      } else if (hit.length) {
+        this.log(`【${card.fullname}】被【无懈可击】抵消了 ${hit.map((t) => t.name).join('、')} 的结算`);
+      }
+    } else {
+      nullifiedAll = await this.checkWuxie(player, card, null);
+    }
+
+    if (nullifiedAll) {
       this.log(`【${card.fullname}】被【无懈可击】抵消`);
       /* 【闪闪】当无懈用掉时，抵消者获得被抵消的牌 */
       if (card._ssTaker && card._ssTaker.alive) {
@@ -419,8 +461,8 @@ async useCardCore(player, card, targets) {
     case 'guohe': await this.resolveGuohe(player, targets); break;
     case 'shunshou': await this.resolveShunshou(player, targets); break;
     case 'wuzhong': await player.draw(2); break;
-    case 'wugu': await this.resolveWugu(player); break;
-    case 'taoyuan': await this.resolveTaoyuan(player); break;
+    case 'wugu': await this.resolveWugu(player, card); break;
+    case 'taoyuan': await this.resolveTaoyuan(player, card); break;
     case 'nanman': await this.resolveAoe(player, card, 'sha'); break;
     case 'wanjian': await this.resolveAoe(player, card, 'shan'); break;
     case 'jiedao': await this.resolveJiedao(player, targets); break;
@@ -458,8 +500,8 @@ async useCardCore(player, card, targets) {
     case 'shushangkaihua': await this.resolveShushangkaihua(player); break;
     case 'shuiyan': await this.resolveShuiyan(player, targets); break;
     case 'xieling': await this.resolveXieling(player); break;
-    case 'shezhan': await this.resolveShezhan(player); break;
-    case 'diaobing': await this.resolveDiaobing(player); break;
+    case 'shezhan': await this.resolveShezhan(player, card); break;
+    case 'diaobing': await this.resolveDiaobing(player, card); break;
     case 'chuqi': await this.resolveChuqi(player, targets); break;
     case 'huoshaolianying': await this.resolveHuoshaolianying(player); break;
     case 'yuanjiao': await this.resolveYuanjiao(player); break;
@@ -490,6 +532,24 @@ async useCardCore(player, card, targets) {
   if (this._misiDrawAfter && this._misiDrawAfter.alive) {
     await this._misiDrawAfter.draw(1);
     this._misiDrawAfter = null;
+  }
+
+  /* 【爱，救护与抉择】：花色不在交出集合里 → 结算后两人各摸一张 */
+  {
+    const t = card._preachTicket;
+    if (t && t.draw) {
+      const owner = this.players.find((p) => p.id === t.ownerId);
+      if (owner && owner.alive) {
+        await player.draw(1);
+        if (owner !== player && owner.alive) {
+          await owner.draw(1);
+          this.log(`【爱，救护与抉择】${player.name} 使用的牌花色不同，`
+            + `${player.name} 与 ${owner.name} 各摸一张`);
+        } else {
+          this.log(`【爱，救护与抉择】${player.name} 使用的牌花色不同，摸一张`);
+        }
+      }
+    }
   }
 
   this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
@@ -807,10 +867,27 @@ _removeFromPiles(card) {
 /* ============================================================
  * 【无懈可击】/【闪闪】询问
  * ------------------------------------------------------------
- * 【闪闪】可以当【无懈可击】打出，且抵消成功后**获得被抵消的牌**。
+ * 与无名杀一致：无懈可击是**逐目标**抵消的。
+ * 群体锦囊（五谷丰登 / 南蛮入侵 / 万箭齐发 / 调兵遣将…）里
+ * 被无懈的那名角色不参与结算，其余角色照常结算。
+ *
+ * 【闪闪】可以当【无懈可击】打出，整张牌被完全抵消时**获得被抵消的牌**。
  * ============================================================ */
-async checkWuxie(source, card, targets) {
-  let nullified = false;
+
+/** 这个目标是否已被【无懈可击】抵消（在 card 上按目标记账） */
+isNullified(card, target) {
+  if (!card || !target) return false;
+  return !!(card.nullifiedTargets && card.nullifiedTargets.has(target));
+},
+
+/**
+ * 询问一轮无懈可击，返回「这个目标是否被抵消」。
+ * @param {Player} source 牌的使用者
+ * @param {Card} card 正在结算的牌
+ * @param {Player|null} target 本次结算的目标（null = 无目标的锦囊）
+ */
+async checkWuxie(source, card, target = null) {
+  let nullified = this.isNullified(card, target);
   let guard = 0;
   // 记录本张牌上打出的所有无懈，供后续技能查询
   const wuxieChain = [];
@@ -822,12 +899,12 @@ async checkWuxie(source, card, targets) {
       const wuxies = p.getCards('he', (c) => c.name === 'wuxie' || c.name === 'shanshan');
       if (!wuxies.length) continue;
 
-      // 目标描述：无懈的目标是「牌」而非角色
+      // 无懈的目标是「牌」
       const targetCard = wuxieChain.length ? wuxieChain[wuxieChain.length - 1] : card;
 
       let want = false;
       if (p.isHuman) {
-        want = await this.io.askWuxie(p, source, targetCard, nullified);
+        want = await this.io.askWuxie(p, source, targetCard, nullified, target);
       } else {
         want = this.ai.shouldWuxie(p, source, targetCard, nullified);
       }
@@ -836,7 +913,7 @@ async checkWuxie(source, card, targets) {
       let picked;
       if (p.isHuman) {
         picked = (await this.io.chooseCards(p, {
-          prompt: `打出【无懈可击】抵消【${targetCard.fullname}】`,
+          prompt: `打出【无懈可击】抵消${target ? `${target.name} 的` : ''}【${targetCard.fullname}】`,
           position: 'he', min: 1, max: 1,
           filter: (c) => c.name === 'wuxie' || c.name === 'shanshan', cancelable: true,
         })) || [];
@@ -864,14 +941,20 @@ async checkWuxie(source, card, targets) {
       this.useEvents[this.useEvents.length - 1].targetCard = targetCard;
 
       this.log(`${p.name} 打出【无懈可击】${nullified ? '抵消' : '反抵消'}`
-        + `【${targetCard.fullname}】`);
+        + `${target ? `${target.name} 的` : ''}【${targetCard.fullname}】`);
       this.emit();
       someone = true;
       break;
     }
     if (!someone) break;
   }
-  card.wuxieChain = wuxieChain;
+  /* 按目标记账，供各 resolver 查询 */
+  if (target) {
+    if (!card.nullifiedTargets) card.nullifiedTargets = new Set();
+    if (nullified) card.nullifiedTargets.add(target);
+    else card.nullifiedTargets.delete(target);
+  }
+  card.wuxieChain = (card.wuxieChain || []).concat(wuxieChain);
   return nullified;
 }
 };

@@ -237,7 +237,7 @@ export default {
   /* ================================================================
    * 【舌战群儒】你摸一张；其他角色可与你同时拼点，你最大或无人应战则摸两张
    * ================================================================ */
-  async resolveShezhan(player) {
+  async resolveShezhan(player, card = null) {
     await player.draw(1);
     const mine = player.getCards('h');
     if (!mine.length) return;
@@ -251,6 +251,11 @@ export default {
     let beaten = false;
     for (const p of this.players) {
       if (p === player || !p.alive || !p.countCards('h')) continue;
+      /* 被【无懈可击】抵消的那名角色不参与拼点 */
+      if (this.isNullified(card, p)) {
+        this.log(`${p.name} 被【无懈可击】抵消，不参与【舌战群儒】`);
+        continue;
+      }
       const cards = p.getCards('h');
       // AI：手牌大且把你当敌人时才应战
       let join;
@@ -289,7 +294,7 @@ export default {
   /* ================================================================
    * 【调兵遣将】亮出牌堆顶 X 张，依次与手牌交换
    * ================================================================ */
-  async resolveDiaobing(player) {
+  async resolveDiaobing(player, card = null) {
     await player.draw(1);
     const alive = this.players.filter((p) => p.alive);
     const x = Math.ceil(alive.length / 2);
@@ -301,6 +306,11 @@ export default {
     const order = orderFrom(player, alive).filter((p) => p === player || p.countCards('h'));
     for (const p of order) {
       if (!p.alive) continue;
+      /* 被【无懈可击】抵消的那名角色不参与交换 */
+      if (this.isNullified(card, p)) {
+        this.log(`${p.name} 被【无懈可击】抵消，不参与【调兵遣将】`);
+        continue;
+      }
       const avail = pool.filter((c) => c.zone === 'reveal' || pool.includes(c));
       if (!avail.length) break;
       if (!p.countCards('h')) continue;

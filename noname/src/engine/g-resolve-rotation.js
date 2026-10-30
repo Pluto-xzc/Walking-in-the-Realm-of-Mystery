@@ -219,9 +219,12 @@ export default {
       if (yes !== 'yes') continue;
       await p.loseCards([ix], 'h');
       this.toDiscard([ix]);
-      markBlessed(p);
-      // 被 IX 的牌的使用者所在目标仍然算「成为过星神赐福的目标」
-      for (const t of targets || []) markBlessed(t);
+      /*
+       * 【IX】是「对一张牌使用」，**不取角色为目标**。
+       * 需求方裁定：用过【IX】的角色仍然可以成为星神赐福的目标，
+       * 被 IX 压掉的牌也不再让任何人获得「成为过目标」的标记
+       *（IX 令其无效 ⇒ 没有任何角色真正成为过该赐福的目标）。
+       */
       this.log(`【IX】${p.name} 令【${card.fullname || card.name}】无效`);
       return true;
     }
@@ -260,6 +263,18 @@ export default {
    * ================================================================ */
   async payTayiziyuluosiCost(player) {
     if (!player.flags.tayiziyuluosiCost) return true;
+    /*
+     * 代价是「弃一张牌」或「失去 1 点体力」，二选一，**必须支付**。
+     * 历史 bug：玩家在选牌界面点取消时直接 return false，
+     * 于是这张牌用不出来、而标记又不会消失 → 整回合什么牌都用不了。
+     * 现在取消一律按「失去 1 点体力」处理，保证一定付得起。
+     */
+    const pool = player.getCards('he');
+    if (!pool.length) {
+      await player.loseHp(1);
+      this.log(`【塔伊兹育罗斯】${player.name} 没有牌可弃，失去 1 点体力`);
+      return true;
+    }
     const yes = await player.chooseOption({
       prompt: '【塔伊兹育罗斯】使用或打出牌前，须弃置一张牌或失去 1 点体力',
       options: [{ key: 'discard', label: '弃置一张牌' }, { key: 'hp', label: '失去 1 点体力' }],
@@ -269,7 +284,10 @@ export default {
       prompt: '【塔伊兹育罗斯】选择要弃置的牌', position: 'he', min: 1, max: 1, cancelable: true,
     });
     if (picked && picked.length) { await player.discard(picked); return true; }
-    return false;
+    // 取消选牌 → 兜底改为失去 1 点体力
+    await player.loseHp(1);
+    this.log(`【塔伊兹育罗斯】${player.name} 放弃弃牌，改为失去 1 点体力`);
+    return true;
   },
 
   /* ================================================================

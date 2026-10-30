@@ -235,6 +235,12 @@ async doDamage(target, num, source, skill, card, nature = null) {
    */
   if (source && hpLoss > 0) markMoDamaged(source);
 
+  /*
+   * 伤害序号：给「本次使用有没有造成伤害」这类判断用的计数器。
+   * 例：【仁慈的背面】——「若你因此未造成伤害」。
+   */
+  if (hpLoss > 0) this.damageSerial = (this.damageSerial || 0) + 1;
+
   // 【体力变化】记录（受到伤害）
   const hpBeforeDamage = target.hp;
   target.hp -= hpLoss;

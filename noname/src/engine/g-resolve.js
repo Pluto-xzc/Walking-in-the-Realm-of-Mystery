@@ -410,7 +410,7 @@ async resolveShunshou(player, targets) {
   }
 },
 
-async resolveWugu(player) {
+async resolveWugu(player, card = null) {
   const alive = this.players.filter((p) => p.alive);
   const pool = [];
   // 亮出的牌数 = 目标人数 + 2（原版是目标人数）
@@ -428,6 +428,11 @@ async resolveWugu(player) {
   const taken = new Set();
   for (const p of order) {
     if (!p.alive) continue;
+    /* 被【无懈可击】抵消的那名角色不参与取牌 */
+    if (this.isNullified(card, p)) {
+      this.log(`${p.name} 被【无懈可击】抵消，不参与【五谷丰登】`);
+      continue;
+    }
     const avail = pool.filter((c) => !taken.has(c));
     if (!avail.length) break;
 
@@ -467,8 +472,12 @@ orderFrom(start, list = null) {
   return [...sorted.slice(i), ...sorted.slice(0, i)];
 },
 
-async resolveTaoyuan(player) {
+async resolveTaoyuan(player, card = null) {
   for (const p of this.players.filter((x) => x.alive)) {
+    if (this.isNullified(card, p)) {
+      this.log(`${p.name} 被【无懈可击】抵消，不回复体力`);
+      continue;
+    }
     if (p.isDamaged()) await p.recover(1);
   }
 },
@@ -500,6 +509,11 @@ async resolveAoe(player, card, respondName) {
      */
     if (!this.canTargetByLimits(player, target, card)) {
       this.log(`${target.name} 不符合本回合的目标限制，不受【${card.fullname}】影响`);
+      continue;
+    }
+    /* 被【无懈可击】抵消的那名角色不参与本次结算 */
+    if (this.isNullified(card, target)) {
+      this.log(`${target.name} 被【无懈可击】抵消，不受【${card.fullname}】影响`);
       continue;
     }
     // 免疫（藤甲）
