@@ -328,6 +328,8 @@ trickNoDistance(player) {
 
 cardNoDistance(player, card) {
   if (!card) return false;
+  // 单张牌自带的「无距离限制」（如【Excalibur(伪)】②、技能视为使用的牌）
+  if (card.noDistance) return true;
   if (card.type === 'trick') return this.trickNoDistance(player);
   // 【杀】：发动【星火尽染寒】的本回合无距离限制
   if (player.flags && player.flags.xinghuoActive === this.turnCount) return true;

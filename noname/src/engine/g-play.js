@@ -106,11 +106,15 @@ restoreConvertedCard(card) {
 defaultTargetsFor(player, card) {
   const def = CARDS[card.name] || {};
   if (def.type === 'equip') return [];
-  // 只对自己生效
-  if (['tao', 'jiu', 'wuzhong'].includes(card.name)) return [player];
-  // 群体 / 全局 / 延时：使用时不选目标
-  if (['nanman', 'wanjian', 'wugu', 'taoyuan', 'tiesuo', 'shandian']
-    .includes(card.name)) return [];
+  if (def.respondOnly) return [];
+  // 延时锦囊：使用时不选目标（判定阶段自己结算）
+  if (def.delayed) return [];
+  // 只对自己生效：桃 / 酒 / 无中生有 / 洞烛先机 / 树上开花 / 挟令 / 舌战群儒 …
+  if (def.selfOnly) return [player];
+  // 群体牌：结算时自行遍历全场，不需要预先指定目标
+  //（南蛮/万箭只打「其他角色」，故没有 allPlayers 字段，需单独列出）
+  if (def.allPlayers || card.name === 'nanman' || card.name === 'wanjian') return [];
+  // 需要选目标的牌交给调用方
   return null;
 },
 
@@ -371,14 +375,21 @@ async useCardCore(player, card, targets) {
     }
   }
 
-  /* 【金蝉脱壳】：目标可以弃置此牌令该牌对自己无效（不是无懈，无法被反制） */
+  /*
+   * 【金蝉脱壳】：目标可以弃置此牌令该牌对自己无效（不是无懈，无法被反制）。
+   * 只有「本来有目标、且全部被抵消」才算结算结束；
+   * 群体锦囊/只对自己的牌本来就可以不带目标（如万箭齐发、无中生有），
+   * 不能因为 targets 为空就判定为「目标全部消失」。
+   */
+  const targetsBeforeJinchan = targets || [];
   targets = await this.filterJinchan(player, card, targets);
-  if (!targets || !targets.length) {
+  if (targetsBeforeJinchan.length && (!targets || !targets.length)) {
     this.log(`【${card.fullname}】的目标全部消失，结算结束`);
     this.toDiscard(card.sourceCards && card.sourceCards.length ? card.sourceCards : [card]);
     this.emit();
     return;
   }
+  targets = targets || [];
 
   /*
    * 【IX】—— 对一张正在结算的牌使用，令其无效。
@@ -402,7 +413,7 @@ async useCardCore(player, card, targets) {
   switch (card.name) {
     case 'sha': await this.resolveSha(player, card, targets); break;
     case 'tao': await this.resolveTao(player, targets); break;
-    case 'juedou': await this.resolveJuedou(player, targets); break;
+    case 'juedou': await this.resolveJuedou(player, targets, card); break;
     case 'guohe': await this.resolveGuohe(player, targets); break;
     case 'shunshou': await this.resolveShunshou(player, targets); break;
     case 'wuzhong': await player.draw(2); break;
@@ -466,7 +477,7 @@ async useCardCore(player, card, targets) {
     this.log(`【迷思】${card.fullname} 额外结算一次`);
     switch (card.name) {
       case 'sha': await this.resolveSha(player, card, targets); break;
-      case 'juedou': await this.resolveJuedou(player, targets); break;
+      case 'juedou': await this.resolveJuedou(player, targets, card); break;
       case 'guohe': await this.resolveGuohe(player, targets); break;
       case 'shunshou': await this.resolveShunshou(player, targets); break;
       case 'huogong': await this.resolveHuogong(player, targets); break;
@@ -699,11 +710,11 @@ makeVirtualCard(base) {
 
 async pickTargetsForVirtual(player, card) {
   const def = CARDS[card.name] || {};
+  const fixed = this.defaultTargetsFor(player, card);
+  if (fixed) return fixed;
   if (def.type === 'equip') return [];
-  // 无目标类（桃/酒/无中生有等）
-  const selfOnly = ['tao', 'jiu', 'wuzhong', 'wugu', 'taoyuan', 'shandian'];
-  if (selfOnly.includes(card.name)) return [player];
-  const cands = this.players.filter((p) => p.alive && p !== player
+  const cands = this.players.filter((p) => p.alive
+    && !(def.notSelf && p === player)
     && this.canBeTargeted(p, card) && this.canTargetByLimits(player, p, card));
   if (!cands.length) return [];
   return this.io.chooseTargets(player, {

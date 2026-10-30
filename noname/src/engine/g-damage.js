@@ -25,6 +25,18 @@ async doDamage(target, num, source, skill, card, nature = null) {
     return null;
   }
 
+  /*
+   * 【Excalibur(伪)】给牌挂上的伤害加值
+   * ----------------------------------------------------------------
+   * 技能在使用牌之前写 card.damageBonus，这里并入本次伤害。
+   * 不在这里清零：群体牌要对每个目标都加上这次加值。
+   */
+  if (card && card.damageBonus) {
+    num += card.damageBonus;
+    this.log(`【Excalibur(伪)】对 ${target.name} 的这次伤害 +${card.damageBonus}`
+      + `（合计 ${num} 点）`);
+  }
+
   // 【破惘长行】一次的体力变动大于 1 时可由技能改为 ±1
   if (num > 1) {
     const nd = await adjustBigChange(this, 'hp', -num);

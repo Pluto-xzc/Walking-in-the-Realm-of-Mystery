@@ -9,6 +9,7 @@ import { CARDS } from '../cards.js';
 import { SKILLS } from '../skills.js';
 import { checkDetachAutoReturn, markRatedTurnStarted, destinyTurnOrder, hasDestinyTurn, tickShifa, checkMoRoundEnd, resetMoRound, resolveXumou, xumouCardsOf, isHidden, exitHidden, tickZhanfaRoundEnd, resetOccupyRound } from '../mechanics.js';
 import { ZONE } from './zones.js';
+import { applyExcaliburWeaponSlot } from '../skills/table-guan.js';
 
 export default {
 async runGame(playerChars, io, ai) {
@@ -59,6 +60,16 @@ async runGame(playerChars, io, ai) {
     p.storage.attackSide = side;
     this.log(`【无穷之锁】${p.name} 的攻击范围为${side === 'left' ? '左' : '右'}侧`);
   }
+
+  /*
+   * 【Excalibur(伪)】武器栏废除
+   * ----------------------------------------------------------------
+   * 需求方：「自己的武器栏不能使用，取而代之的是默认的攻击范围 +1，是永续效果」。
+   * 武器栏废除后，装备【武器】会被 engine 拒绝（见 equipCard），
+   * 攻击范围 +1 由技能 mod 提供。具体实现在 skills/table-guan.js，
+   * 抽成函数是为了让回归测试可以直接调用。
+   */
+  applyExcaliburWeaponSlot(this);
   this.emit();
 
   // 初始手牌

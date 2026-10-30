@@ -132,6 +132,11 @@ async askShan(target, source, card) {
     this.log(`${target.name} 被跳过了牌的询问，无法响应【${card ? card.fullname : '杀'}】`);
     return false;
   }
+  // 【Excalibur(伪)】③：这批目标不可响应此牌
+  if (card && card.noRespondTargets && card.noRespondTargets.includes(target)) {
+    this.log(`${target.name} 因【Excalibur(伪)】不能响应【${card.fullname}】`);
+    return false;
+  }
   /*
    * 防具技是否被「无视防具」的武器压制（青釭剑）。
    * 防具自身可以声明 armorSkillUnignorable 来拒绝被无视（精银甲）。
@@ -283,9 +288,15 @@ async resolveTao(player, targets) {
   tickZhanfaOnTao(player);
 },
 
-async resolveJuedou(player, targets) {
+async resolveJuedou(player, targets, card = null) {
   const target = targets[0];
   if (!target || !target.alive) return;
+  // 【Excalibur(伪)】③：目标不可响应（不打出【杀】，直接受伤）
+  if (card && card.noRespondTargets && card.noRespondTargets.includes(target)) {
+    this.log(`${target.name} 因【Excalibur(伪)】不能响应【${card.fullname}】`);
+    await target.damage(1, player, 'juedou');
+    return;
+  }
   let needSha = 1;
   for (const sid of player.skills) {
     const sk = SKILLS[sid];
